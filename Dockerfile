@@ -30,4 +30,4 @@ EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD wget -qO- http://127.0.0.1:4000/api/health || exit 1
 ENTRYPOINT ["/sbin/tini", "--"]
 # Applies pending database migrations, then starts the API (+ worker unless RUN_WORKER=false).
-CMD ["sh", "-c", "node dist/db/migrate.js && node dist/index.js"]
+CMD ["node", "dist/start.js"]

@@ -12,9 +12,13 @@
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
     "db:migrate": "npm run db:migrate -w server",
     "db:seed": "npm run db:seed -w server",
-    "test": "npm test -w server"
+    "test": "npm test -w server",
+    "start": "node server.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
