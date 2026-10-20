@@ -7,6 +7,8 @@ import { appointments, calls, favorites, leads, messages, templates, users } fro
 import { ah, badRequest, forbidden, notFound } from '../lib/http.js';
 import type { AuthedRequest } from '../middleware/auth.js';
 import { getSettings, notify } from '../services/rules.js';
+import { fire, stopRuns } from '../services/automation.js';
+import { queueMessage } from '../services/messaging.js';
 import { getVisibleLead, leadScope } from '../services/scope.js';
 
 export const workRouter = Router();
@@ -56,9 +58,8 @@ workRouter.post('/appointments', ah<AuthedRequest>(async (req, res) => {
   const lead = await getVisibleLead(req.user, body.leadId);
   const userId = lead.agentId ?? req.user.id;
   const [a] = await db.insert(appointments).values({ leadId: lead.id, userId, startsAt: new Date(body.startsAt), type: body.type, durationMin: body.durationMin }).returning();
-  const patch: Partial<typeof leads.$inferInsert> = { automation: null, updatedAt: new Date() }; // booking stops automations (SOW 4)
-  if (body.type === 'Call-back') Object.assign(patch, { callbackRequested: true, followUpAt: new Date(body.startsAt) });
-  await db.update(leads).set(patch).where(eq(leads.id, lead.id));
+  if (body.type === 'Call-back') await db.update(leads).set({ callbackRequested: true, followUpAt: new Date(body.startsAt), updatedAt: new Date() }).where(eq(leads.id, lead.id));
+  await stopRuns(db, lead.id, 'booking'); // booking stops automations set to stop on booking (SOW 4)
   await notify(db, { agencyId: lead.agencyId, userId, kind: 'book', text: `Appointment booked: ${lead.firstName} ${lead.lastName} · ${body.type}`, leadId: lead.id });
   res.status(201).json(a);
 }));
@@ -71,11 +72,9 @@ workRouter.patch('/appointments/:id', ah<AuthedRequest>(async (req, res) => {
   if (req.user.role !== 'admin' && appt.userId !== req.user.id) throw forbidden();
   await db.update(appointments).set({ status }).where(eq(appointments.id, appt.id));
   if (status === 'noshow') {
-    // SOW 6 missed appointment: message to rebook + alert agent and admin.
-    if (!lead.optOut) await db.insert(messages).values({ leadId: lead.id, channel: 'sms', direction: 'out', automated: true, status: 'queued', body: `Hi ${lead.firstName}, we missed you today. Pick a new time that works for you: {booking}` });
-    const text = `Missed appointment: ${lead.firstName} ${lead.lastName}. Rebooking text queued.`;
-    await notify(db, { agencyId: lead.agencyId, userId: appt.userId, kind: 'bad', text, leadId: lead.id });
-    await notify(db, { agencyId: lead.agencyId, userId: null, kind: 'bad', text, leadId: lead.id });
+    // SOW 6 missed appointment: the "Missed appointment" automation texts the lead to rebook and alerts agent + admin.
+    const started = await fire(db, 'missed_appointment', { agencyId: lead.agencyId, leadId: lead.id });
+    if (!started.length) await notify(db, { agencyId: lead.agencyId, userId: appt.userId, kind: 'bad', text: `Missed appointment: ${lead.firstName} ${lead.lastName}`, leadId: lead.id });
   }
   res.json({ ok: true });
 }));
@@ -124,8 +123,8 @@ workRouter.post('/leads/:id/messages', ah<AuthedRequest>(async (req, res) => {
   if (lead.optOut) throw badRequest('This lead opted out. Messages are blocked.');
   if (req.user.role !== 'admin' && lead.agentId !== req.user.id) throw forbidden('Only the lead owner can message this lead');
   if (body.channel === 'email' && !lead.email) throw badRequest('This lead has no email address');
-  const [m] = await db.insert(messages).values({ leadId: lead.id, userId: req.user.id, channel: body.channel, direction: 'out', subject: body.channel === 'email' ? body.subject || 'Message from your agent' : null, body: body.body, status: 'queued' }).returning();
-  if (lead.automation) await db.update(leads).set({ automation: null }).where(eq(leads.id, lead.id));
+  const m = await queueMessage(db, { kind: 'lead', id: lead.id }, { channel: body.channel, subject: body.subject, body: body.body, userId: req.user.id });
+  if (!m) throw badRequest('This lead cannot receive that message');
   res.status(201).json(m);
 }));
 

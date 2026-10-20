@@ -6,6 +6,7 @@ import { STAGES, type Appointment, type Lead, type Policy, type Stage } from '..
 import { ago, daysUntil, ftime, kmoney, money, pct } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { Avatar, Bar, colorFor, Loading, PageHead, Pill } from '../components/ui';
+import { TasksPanel } from '../components/Tasks';
 
 type Dash = {
   kpis: { newLeads: number; contacted: number; quoted: number; won: number; revenue: number; conversion: number };
@@ -103,6 +104,7 @@ function AdminDash({ d }: { d: Dash }) {
                 <div className="li click" key={l.id} onClick={() => open(l.id)}><div className="grow"><b>{l.firstName} {l.lastName}</b><small>{l.source} · {l.line}</small></div><small className="muted">{ago(l.createdAt)}</small></div>
               ))}{!d.unassigned.length && <p className="muted">All leads are assigned.</p>}</div>
               <Link className="btn sm" style={{ marginTop: 10 }} to="/leads?tab=intake">Open intake</Link></div></section>
+          <TasksPanel />
           <section className="panel"><div className="panel-h"><h2>Agent status</h2></div><div className="panel-b"><div className="list">{lb.map((a) => (
             <div className="li" key={a.id}><Avatar name={a.name} color={colorFor(a.id)} /><div className="grow"><b>{a.name}</b><small>{a.callsToday} / {a.maxCalls} calls today</small></div>
               <span className="row" style={{ gap: 6 }}><span className={`dot ${a.status}`} /><small>{{ available: 'Available', oncall: 'On call', offline: 'Offline' }[a.status]}</small></span></div>
@@ -141,6 +143,7 @@ function AgentDash({ d }: { d: Dash }) {
               <tbody>{d.today.map((a) => <TodayRow key={a.id} a={a} />)}{!d.today.length && <tr><td colSpan={4} className="empty">Nothing scheduled today</td></tr>}</tbody></table></div></section>
         </div>
         <div className="stack">
+          <TasksPanel />
           <section className="panel"><div className="panel-h"><h2>My target</h2><Pill color="--s6">{pct(t.achieved, t.target)}%</Pill></div>
             <div className="panel-b"><Bar value={pct(t.achieved, t.target)} thick />
               <div className="target-figs"><div><small className="muted">Target</small><b>{kmoney(t.target)}</b></div><div><small className="muted">Achieved</small><b>{kmoney(t.achieved)}</b></div><div><small className="muted">Remaining</small><b>{kmoney(Math.max(0, t.target - t.achieved))}</b></div><div><small className="muted">Sold</small><b>{t.sold}</b></div></div>

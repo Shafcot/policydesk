@@ -12,7 +12,8 @@ import { Inbox } from './pages/Inbox';
 import { Customers, Sales, TargetsPage } from './pages/Book';
 import { Reports } from './pages/Reports';
 import { SettingsPage, Users } from './pages/Admin';
-import { ComingSoon } from './pages/ComingSoon';
+import { Automations } from './pages/Automations';
+import { Campaigns } from './pages/Campaigns';
 
 export function App() {
   const { user, loading } = useAuth();
@@ -37,8 +38,8 @@ export function App() {
         {isAdmin && <>
           <Route path="users" element={<Users />} />
           <Route path="settings" element={<SettingsPage />} />
-          <Route path="automations" element={<ComingSoon />} />
-          <Route path="campaigns" element={<ComingSoon />} />
+          <Route path="automations" element={<Automations />} />
+          <Route path="campaigns" element={<Campaigns />} />
         </>}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

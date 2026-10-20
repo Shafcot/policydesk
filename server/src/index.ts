@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
@@ -13,6 +14,9 @@ import { usersRouter } from './routes/users.js';
 import { workRouter } from './routes/work.js';
 import { bookRouter } from './routes/book.js';
 import { adminRouter } from './routes/admin.js';
+import { growthRouter } from './routes/growth.js';
+import { attachRealtime } from './services/realtime.js';
+import { startWorker } from './services/jobs.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -36,7 +40,12 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/meta', metaRouter);
 app.use('/api', bookRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api', growthRouter);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'not_found' }));
 app.use(errorHandler);
 
-app.listen(env.PORT, () => console.log(`Policy-desk API listening on :${env.PORT}`));
+const server = createServer(app);
+attachRealtime(server);
+server.listen(env.PORT, () => console.log(`Policy-desk API listening on :${env.PORT}`));
+// The background worker runs inside the API process unless RUN_WORKER=false (then run `npm run worker` separately).
+if (process.env.RUN_WORKER !== 'false') startWorker();

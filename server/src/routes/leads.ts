@@ -8,6 +8,8 @@ import { ah, badRequest, forbidden } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { assertCanCall, getVisibleLead, leadScope } from '../services/scope.js';
 import { getSettings, notify, pickAgent, recordCall, setStage } from '../services/rules.js';
+import { fire, stopRuns } from '../services/automation.js';
+import { emitLead } from '../services/realtime.js';
 
 export const leadsRouter = Router();
 
@@ -77,6 +79,8 @@ export async function createLead(agencyId: string, body: z.infer<typeof NewLead>
   }).returning();
   await db.insert(notes).values({ leadId: lead.id, body: `Lead received from ${body.source}. Requested ${body.line} quote.` });
   const name = `${lead.firstName} ${lead.lastName}`;
+  await fire(db, 'new_lead', { agencyId, leadId: lead.id });
+  emitLead(agencyId, lead.agentId, 'lead:new', { id: lead.id, name, source: lead.source });
   if (agent) await notify(db, { agencyId, userId: agent.id, kind: 'lead', text: `New lead assigned to ${agent.name}: ${name}`, leadId: lead.id });
   else await notify(db, { agencyId, userId: null, kind: 'warn', text: `No agent matched ${name}. Lead is waiting in intake.`, leadId: lead.id });
   return lead;
@@ -126,8 +130,8 @@ leadsRouter.patch('/:id', ah<AuthedRequest>(async (req, res) => {
     if (body.followUpAt !== undefined) set.followUpAt = body.followUpAt ? new Date(body.followUpAt) : null;
     if (body.custom) set.custom = { ...lead.custom, ...body.custom };
     if (body.email !== undefined) set.email = body.email || null;
-    if (body.automation !== undefined) set.automation = body.automation;
     await tx.update(leads).set(set).where(eq(leads.id, lead.id));
+    if (body.automation === null) await stopRuns(tx, lead.id, 'manual');
     if (body.stage) await setStage(tx, lead, body.stage, { id: req.user.id, name: req.user.name });
     if (body.agentId && body.agentId !== lead.agentId) {
       const a = await tx.query.users.findFirst({ where: eq(users.id, body.agentId) });
@@ -135,7 +139,9 @@ leadsRouter.patch('/:id', ah<AuthedRequest>(async (req, res) => {
       await notify(tx, { agencyId: lead.agencyId, userId: a.id, kind: 'lead', text: `Lead assigned to you: ${lead.firstName} ${lead.lastName}`, leadId: lead.id });
     }
   });
-  res.json(await getVisibleLead(req.user, lead.id));
+  const fresh = await getVisibleLead(req.user, lead.id);
+  emitLead(fresh.agencyId, fresh.agentId, 'lead:changed', { id: fresh.id });
+  res.json(fresh);
 }));
 
 leadsRouter.post('/bulk', requireAdmin, ah<AuthedRequest>(async (req, res) => {

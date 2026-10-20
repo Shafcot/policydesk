@@ -125,11 +125,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
           ))}
         </div></div></section>
 
-        <section className="panel"><div className="panel-h"><h3>Automation</h3></div><div className="panel-b row between">
-          {l.automation
-            ? <><span><Icon name="zap" className="sm" /> In <b>{l.automation}</b>. Stops when the lead replies, books, or is won/lost.</span><button className="btn sm" onClick={() => patch.mutate({ automation: null })}>Remove</button></>
-            : <span className="muted">Not in an automation.</span>}
-        </div></section>
+        <LeadAutomations leadId={l.id} onRemove={() => patch.mutate({ automation: null })} />
 
         <div className="grid g2">
           <section className="panel"><div className="panel-h"><h3>Appointments</h3></div><div className="panel-b"><div className="list">
@@ -203,5 +199,24 @@ function Notes({ lead }: { lead: LeadDetail }) {
         {lead.notes.map((n) => <div className="li" key={n.id} style={{ alignItems: 'flex-start' }}><div className="grow"><small>{n.userName ?? 'System'} · {fdt(n.createdAt)}</small><p style={{ whiteSpace: 'pre-wrap' }}>{n.body}</p></div></div>)}
       </div>
     </>
+  );
+}
+
+type LeadRun = { id: string; name: string; status: 'active' | 'completed' | 'stopped'; nextRunAt: string; stopReason: string | null; log: { at: string; text: string }[] };
+
+function LeadAutomations({ leadId, onRemove }: { leadId: string; onRemove: () => void }) {
+  const { data = [] } = useQuery({ queryKey: ['lead', leadId, 'runs'], queryFn: () => api<LeadRun[]>(`/leads/${leadId}/runs`) });
+  const active = data.filter((r) => r.status === 'active');
+  return (
+    <section className="panel"><div className="panel-h"><h3>Automations</h3>{active.length > 0 && <button className="btn sm" onClick={onRemove}>Stop all</button>}</div>
+      <div className="panel-b"><div className="list">
+        {data.slice(0, 5).map((r) => (
+          <div className="li" key={r.id}><Icon name="zap" className="sm" /><div className="grow"><b>{r.name}</b>
+            <small>{r.status === 'active' ? `Next step ${fdt(r.nextRunAt)}` : r.status === 'completed' ? (r.stopReason ? `Ended: ${r.stopReason}` : 'Finished') : `Stopped: ${r.stopReason?.replace('_', ' ')}`} · {r.log.at(-1)?.text ?? ''}</small></div>
+            <Pill color={r.status === 'active' ? '--info' : r.status === 'completed' ? '--ok' : '--s9'}>{r.status === 'active' ? 'In flow' : r.status === 'completed' ? 'Done' : 'Stopped'}</Pill></div>
+        ))}
+        {!data.length && <p className="muted">Not in any automation. Flows stop when the lead replies, books, or is won/lost.</p>}
+      </div></div>
+    </section>
   );
 }

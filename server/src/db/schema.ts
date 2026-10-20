@@ -2,7 +2,7 @@ import { relations } from 'drizzle-orm';
 import {
   customType, boolean, index, primaryKey, integer, jsonb, pgEnum, pgTable, text, timestamp, uuid, varchar,
 } from 'drizzle-orm/pg-core';
-import { AGENT_STATUSES, CALL_RESULTS, DEFAULT_SETTINGS, ROLES, STAGES, type AgencySettings } from '../domain.js';
+import { AGENT_STATUSES, CALL_RESULTS, DEFAULT_SETTINGS, ROLES, STAGES, TRIGGERS, type AgencySettings, type Step, type TriggerConfig } from '../domain.js';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const agentStatusEnum = pgEnum('agent_status', AGENT_STATUSES);
@@ -122,7 +122,9 @@ export const notes = pgTable('notes', {
 
 export const messages = pgTable('messages', {
   id: id(),
-  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  /** A message belongs to a lead, or to a customer with no lead (e.g. imported customers' renewal reminders). */
+  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'cascade' }),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'cascade' }),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
   channel: channelEnum('channel').notNull(),
   direction: directionEnum('direction').notNull(),
@@ -143,6 +145,7 @@ export const appointments = pgTable('appointments', {
   durationMin: integer('duration_min').notNull().default(30),
   type: varchar('type', { length: 40 }).notNull(),
   status: apptStatusEnum('status').notNull().default('scheduled'),
+  remindedAt: ts('reminded_at'),
   createdAt: createdAt(),
 }, (t) => [index('appointments_user_starts_idx').on(t.userId, t.startsAt)]);
 
@@ -218,6 +221,82 @@ export const templates = pgTable('templates', {
   createdAt: createdAt(),
 });
 
+export const triggerEnum = pgEnum('automation_trigger', TRIGGERS);
+export const runStatusEnum = pgEnum('run_status', ['active', 'completed', 'stopped']);
+export const campaignKindEnum = pgEnum('campaign_kind', ['broadcast', 'birthday', 'holiday']);
+
+export const automations = pgTable('automations', {
+  id: id(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 120 }).notNull(),
+  active: boolean('active').notNull().default(false),
+  trigger: triggerEnum('trigger').notNull(),
+  triggerConfig: jsonb('trigger_config').$type<TriggerConfig>().notNull().default({}),
+  steps: jsonb('steps').$type<Step[]>().notNull().default([]),
+  stopOnReply: boolean('stop_on_reply').notNull().default(true),
+  stopOnBooking: boolean('stop_on_booking').notNull().default(true),
+  stopOnWonLost: boolean('stop_on_won_lost').notNull().default(true),
+  businessHoursOnly: boolean('business_hours_only').notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+
+/** One lead (or customer) going through one automation. The worker advances runs whose nextRunAt has passed. */
+export const automationRuns = pgTable('automation_runs', {
+  id: id(),
+  automationId: uuid('automation_id').notNull().references(() => automations.id, { onDelete: 'cascade' }),
+  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'cascade' }),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'cascade' }),
+  policyId: uuid('policy_id').references(() => policies.id, { onDelete: 'cascade' }),
+  stepIndex: integer('step_index').notNull().default(0),
+  status: runStatusEnum('status').notNull().default('active'),
+  nextRunAt: ts('next_run_at').notNull().defaultNow(),
+  stopReason: varchar('stop_reason', { length: 120 }),
+  log: jsonb('log').$type<{ at: string; text: string }[]>().notNull().default([]),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+}, (t) => [index('runs_due_idx').on(t.status, t.nextRunAt), index('runs_lead_idx').on(t.leadId)]);
+
+export const tasks = pgTable('tasks', {
+  id: id(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'cascade' }),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  dueAt: ts('due_at').notNull().defaultNow(),
+  doneAt: ts('done_at'),
+  createdAt: createdAt(),
+}, (t) => [index('tasks_user_idx').on(t.userId, t.doneAt)]);
+
+export const campaigns = pgTable('campaigns', {
+  id: id(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  kind: campaignKindEnum('kind').notNull(),
+  name: varchar('name', { length: 120 }).notNull(),
+  channel: channelEnum('channel').notNull().default('sms'),
+  subject: varchar('subject', { length: 240 }),
+  body: text('body').notNull(),
+  active: boolean('active').notNull().default(true),
+  /** holiday: 'MM-DD'. */
+  holidayDate: varchar('holiday_date', { length: 5 }),
+  /** broadcast: filters chosen when composing. */
+  audience: jsonb('audience').$type<{ stage?: string; line?: string; type?: string; includeCustomers?: boolean }>(),
+  scheduledFor: ts('scheduled_for'),
+  sentAt: ts('sent_at'),
+  recipients: integer('recipients').notNull().default(0),
+  excluded: integer('excluded').notNull().default(0),
+  createdAt: createdAt(),
+});
+
+/** Records that a daily job ran for an agency on a given local date, so it runs once per day. */
+export const jobRuns = pgTable('job_runs', {
+  job: varchar('job', { length: 40 }).notNull(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  day: varchar('day', { length: 10 }).notNull(),
+  ranAt: createdAt(),
+}, (t) => [primaryKey({ columns: [t.job, t.agencyId, t.day] })]);
+
 export const leadsRelations = relations(leads, ({ one, many }) => ({
   agent: one(users, { fields: [leads.agentId], references: [users.id] }),
   calls: many(calls),
@@ -246,5 +325,7 @@ export const policiesRelations = relations(policies, ({ one }) => ({
 }));
 
 export type User = typeof users.$inferSelect;
+export type Automation = typeof automations.$inferSelect;
+export type AutomationRun = typeof automationRuns.$inferSelect;
 export type Lead = typeof leads.$inferSelect;
 export type Agency = typeof agencies.$inferSelect;

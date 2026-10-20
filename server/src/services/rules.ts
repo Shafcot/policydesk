@@ -2,6 +2,8 @@
 import { and, eq, gte, inArray, isNull, lt, max, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { agencies, appointments, calls, leads, notes, notifications, users, type Lead, type User } from '../db/schema.js';
+import { fire, stopRuns } from './automation.js';
+import { emit } from './realtime.js';
 import { DEFAULT_SETTINGS, NOT_REACHED, RESULT_STAGE, STAGE_LABELS, type AgencySettings, type CallResult, type Stage } from '../domain.js';
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -13,7 +15,9 @@ export async function getSettings(agencyId: string, x: Exec = db): Promise<Agenc
 }
 
 export async function notify(x: Exec, n: { agencyId: string; userId?: string | null; kind: string; text: string; leadId?: string | null }) {
-  await x.insert(notifications).values({ agencyId: n.agencyId, userId: n.userId ?? null, kind: n.kind, text: n.text, leadId: n.leadId ?? null });
+  const [row] = await x.insert(notifications).values({ agencyId: n.agencyId, userId: n.userId ?? null, kind: n.kind, text: n.text, leadId: n.leadId ?? null }).returning();
+  // Live push (bell + toast). Email copies of notifications are sent once SendGrid is connected.
+  emit(n.agencyId, n.userId ?? null, 'notification', row);
 }
 
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
@@ -62,6 +66,8 @@ export async function setStage(x: Exec, lead: Lead, stage: Stage, actor: { id: s
     leadId: lead.id, userId: actor.id,
     body: `Stage changed: ${STAGE_LABELS[lead.stage]} → ${STAGE_LABELS[stage]}${why ? ` (${why})` : ''}`,
   });
+  if (stage === 'won' || stage === 'lost') await stopRuns(x, lead.id, 'won_lost');
+  await fire(x, 'stage_change', { agencyId: lead.agencyId, leadId: lead.id, stage });
 }
 
 /** Logs a call and applies the SOW's call-result rules. Returns the updated lead. */
@@ -102,6 +108,7 @@ export async function recordCall(
     if (input.notes) await tx.insert(notes).values({ leadId: lead.id, userId: user.id, body: input.notes });
     // "Sold" moves to Won only once the customer + policy exist (POST /leads/:id/won), so the stage never says Won without a sale.
     if (input.result !== 'sold') await setStage(tx, lead, stage, { id: user.id, name: user.name }, `call result: ${input.result.replace('_', ' ')}`);
+    await fire(tx, 'call_result', { agencyId: lead.agencyId, leadId: lead.id, result: input.result });
     const updated = await tx.query.leads.findFirst({ where: eq(leads.id, lead.id) });
     return updated!;
   });

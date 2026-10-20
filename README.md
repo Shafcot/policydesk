@@ -46,6 +46,18 @@ Until Twilio/SendGrid are connected (Milestone 3), the dialer has agents dial fr
 
 Business rules live in `server/src/services/rules.ts`: lead auto-assignment (round robin / availability / line of insurance, skipping offline or at-limit agents), call result → stage, retries, call-backs, recycling and the 5-month re-quote.
 
+## Automations and the background worker
+
+The worker runs inside the API process every 15 seconds (set `RUN_WORKER=false` and run `npm run worker -w server` to split it out). It:
+
+- advances automation runs whose wait has passed (`server/src/services/automation.ts`)
+- sends appointment reminders and scheduled broadcasts
+- once a day per agency, after opening time in the agency's time zone: auto-moves, renewal triggers (60/30 days), birthday and holiday messages
+
+Flows stop when the lead replies, books or is won/lost (per flow), and always when the lead opts out. Messages only go out during business hours when the flow says so. Until Twilio and SendGrid are connected, outgoing messages are stored as **queued**.
+
+To test replies before the webhooks exist, admins can call `POST /api/dev/inbound` with `{ "leadId": "...", "body": "STOP" }` (disabled in production).
+
 ## Database changes
 
 Edit `server/src/db/schema.ts`, then:
@@ -59,8 +71,8 @@ npm run db:migrate
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| 1 · Frontend | All screens: dashboards, leads, lead page, pipeline, dialer + speed dial, calendar, inbox, customers & policies, sales, targets, reports, users, settings | Done except the automation builder and campaigns screens (next) |
-| 2 · Backend | Automations, scheduled jobs, live updates (Socket.IO), reports, imports | Not started |
+| 1 · Frontend | All screens, including the automation builder and campaigns | Done |
+| 2 · Backend | Automation engine, background worker (reminders, renewals, birthdays, holidays, auto-moves), campaigns, tasks, live updates (Socket.IO) | In progress |
 | 3 · Integrations & testing | Twilio, SendGrid, OpenAI, Firebase, lead sources, data migration | Not started |
 
 Hosting is not decided yet. Nothing in the code is tied to a provider; file storage goes through a local-disk driver that can be swapped for S3-compatible storage later.
