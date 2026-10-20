@@ -23,6 +23,11 @@ export function Users() {
   const [edit, setEdit] = useState<User | 'new' | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [invite, setInvite] = useState<string | null>(null);
+  const reset = useMutation({
+    mutationFn: (id: string) => api<{ resetLink: string }>(`/admin/users/${id}/reset`, { method: 'POST' }),
+    onSuccess: (r) => setInvite(r.resetLink),
+    onError: (e) => toast(err(e), 'alert'),
+  });
   const remove = useMutation({
     mutationFn: (id: string) => api<{ leadsMovedToIntake: number }>(`/admin/users/${id}`, { method: 'DELETE' }),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['users'] }); setConfirm(null); toast(`User removed${r.leadsMovedToIntake ? `. ${r.leadsMovedToIntake} leads moved to intake` : ''}.`); },
@@ -44,6 +49,7 @@ export function Users() {
             <td>{u.invited ? <Pill color="--warn">Invite sent</Pill> : <span className="row" style={{ gap: 6 }}><span className={`dot ${u.status}`} />{{ available: 'Available', oncall: 'On call', offline: 'Offline' }[u.status]}</span>}</td>
             <td><div className="row" style={{ flexWrap: 'nowrap' }}>
               <button className="btn sm" onClick={() => setEdit(u)}><Icon name="edit" className="sm" />Edit</button>
+              {!u.invited && <button className="btn sm" onClick={() => reset.mutate(u.id)} title="Email a password reset link">Reset password</button>}
               {u.id !== me.id && (confirm === u.id
                 ? <button className="btn sm danger" onClick={() => remove.mutate(u.id)}>Confirm remove</button>
                 : <button className="btn sm danger" onClick={() => setConfirm(u.id)}>Remove</button>)}
@@ -54,8 +60,8 @@ export function Users() {
       <p className="help" style={{ marginTop: 8 }}>Removing a user keeps their history and moves their open leads to intake for reassignment.</p>
       {edit && <UserModal user={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onInvited={setInvite} />}
       {invite && (
-        <Modal title="Invitation created" onClose={() => setInvite(null)} footer={<button className="btn primary" onClick={() => setInvite(null)}>Done</button>}>
-          <p>Send this link to the new user so they can set a password. Invitation emails send automatically once SendGrid is connected (Milestone 3).</p>
+        <Modal title={invite.includes('reset-password') ? 'Password reset link' : 'Invitation created'} onClose={() => setInvite(null)} footer={<button className="btn primary" onClick={() => setInvite(null)}>Done</button>}>
+          <p>{invite.includes('reset-password') ? 'We emailed this link to the user (valid for 1 hour). You can also send it to them directly.' : 'We emailed this invitation to the new user. You can also send them the link directly.'} Emails go out once SendGrid is connected.</p>
           <div className="copybox"><input className="input" readOnly value={invite} aria-label="Invite link" /><button className="icon-btn" onClick={() => navigator.clipboard.writeText(invite).then(() => toast('Link copied'), () => toast(invite, 'copy'))} aria-label="Copy"><Icon name="copy" className="sm" /></button></div>
         </Modal>
       )}

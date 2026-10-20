@@ -15,7 +15,7 @@ export const usersRouter = Router();
 usersRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   const list = await db.query.users.findMany({ where: and(eq(users.agencyId, req.user.agencyId), eq(users.active, true)), orderBy: asc(users.name) });
   if (req.user.role !== 'admin') {
-    return res.json(list.map((u) => ({ id: u.id, name: u.name, role: u.role, status: u.status })));
+    return res.json(list.map((u) => ({ id: u.id, name: u.name, role: u.role, status: u.status, bookingSlug: u.bookingSlug })));
   }
   const today = await callsTodayByUser(req.user.agencyId);
   res.json(list.map((u) => ({ ...publicUser(u), invited: !!u.inviteToken, callsToday: today.get(u.id) ?? 0 })));
@@ -24,5 +24,11 @@ usersRouter.get('/', ah<AuthedRequest>(async (req, res) => {
 usersRouter.patch('/me/status', ah<AuthedRequest>(async (req, res) => {
   const { status } = z.object({ status: z.enum(AGENT_STATUSES) }).parse(req.body);
   const [u] = await db.update(users).set({ status }).where(eq(users.id, req.user.id)).returning();
+  res.json(publicUser(u));
+}));
+
+usersRouter.patch('/me/prefs', ah<AuthedRequest>(async (req, res) => {
+  const { notifyByEmail } = z.object({ notifyByEmail: z.boolean() }).parse(req.body);
+  const [u] = await db.update(users).set({ notifyByEmail }).where(eq(users.id, req.user.id)).returning();
   res.json(publicUser(u));
 }));

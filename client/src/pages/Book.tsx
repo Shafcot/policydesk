@@ -11,31 +11,10 @@ import { useOpenLead } from '../lib/leadLink';
 import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
 import { Avatar, Bar, colorFor, Empty, Loading, Modal, PageHead, Pill } from '../components/ui';
+import { downloadCsv, parseCsv } from '../lib/csv';
 
 type Customer = { id: string; name: string; company: string | null; phone: string | null; email: string | null; type: 'personal' | 'commercial'; agentName: string | null; source: string | null; imported: boolean; createdAt: string; policyCount: number; premium: number; leadId: string | null; dob: string | null };
 type PolicyRow = Policy & { customerId: string; customerName: string; agentName: string | null };
-
-export function downloadCsv(name: string, rows: (string | number | null | undefined)[][]) {
-  const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = name; a.click(); URL.revokeObjectURL(a.href);
-}
-
-/** Minimal CSV parser (quoted fields, commas and newlines inside quotes). */
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = []; let row: string[] = [], cur = '', q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) { if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; }
-    else if (c === '"') q = true;
-    else if (c === ',') { row.push(cur); cur = ''; }
-    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
-    else cur += c;
-  }
-  if (cur || row.length) { row.push(cur); rows.push(row); }
-  return rows.filter((r) => r.some((x) => x.trim()));
-}
 
 const IMPORT_HEADERS = ['name', 'phone', 'email', 'type', 'carrier', 'line', 'premium', 'effective_date', 'policy_number', 'agent_email'];
 

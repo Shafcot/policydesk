@@ -10,7 +10,9 @@ import { env } from '../config.js';
 import { ah, badRequest, notFound } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { getSettings, notify } from '../services/rules.js';
-import { publicUser } from './auth.js';
+import { issueReset, publicUser } from './auth.js';
+import { makeSlug } from '../lib/slug.js';
+import { sendTeamEmail } from '../services/mailer.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
@@ -28,8 +30,10 @@ adminRouter.post('/users/invite', ah<AuthedRequest>(async (req, res) => {
   const email = b.email.toLowerCase().trim();
   if (await db.query.users.findFirst({ where: eq(users.email, email) })) throw badRequest('A user with that email already exists');
   const token = randomBytes(24).toString('hex');
-  const [u] = await db.insert(users).values({ ...b, email, agencyId: req.user.agencyId, inviteToken: token, status: 'offline' }).returning();
-  res.status(201).json({ user: publicUser(u), inviteLink: `${env.CLIENT_ORIGIN}/accept-invite?token=${token}` });
+  const [u] = await db.insert(users).values({ ...b, email, agencyId: req.user.agencyId, inviteToken: token, status: 'offline', bookingSlug: makeSlug(b.name) }).returning();
+  const inviteLink = `${env.CLIENT_ORIGIN}/accept-invite?token=${token}`;
+  await sendTeamEmail(db, { agencyId: req.user.agencyId, to: email, subject: `${req.user.name} invited you to Policy-desk CRM`, body: `Hi ${b.name.split(' ')[0]},\n\n${req.user.name} invited you to join Policy-desk CRM. Set your password here:\n${inviteLink}` });
+  res.status(201).json({ user: publicUser(u), inviteLink });
 }));
 
 adminRouter.patch('/users/:id', ah<AuthedRequest>(async (req, res) => {
@@ -58,6 +62,13 @@ adminRouter.delete('/users/:id', ah<AuthedRequest>(async (req, res) => {
     return r.length;
   });
   res.json({ ok: true, leadsMovedToIntake: moved });
+}));
+
+/** Admin-triggered password reset: emails the user a link and returns it so the admin can share it directly. */
+adminRouter.post('/users/:id/reset', ah<AuthedRequest>(async (req, res) => {
+  const u = await db.query.users.findFirst({ where: and(eq(users.id, String(req.params.id)), eq(users.agencyId, req.user.agencyId)) });
+  if (!u || !u.active) throw notFound('User not found');
+  res.json({ resetLink: await issueReset(u.id) });
 }));
 
 /* ---------- settings ---------- */

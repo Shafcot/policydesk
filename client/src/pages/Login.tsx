@@ -20,7 +20,7 @@ export function Login() {
         <div className="field"><label htmlFor="password">Password</label><input id="password" className="input" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {err && <p className="optout">{err}</p>}
         <button className="btn primary lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-        <p className="help">Forgot your password? Ask your agency’s Super Admin to resend your invitation.</p>
+        <a className="help" href="/forgot-password">Forgot your password?</a>
       </form>
     </div>
   );

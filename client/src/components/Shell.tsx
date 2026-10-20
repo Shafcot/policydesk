@@ -87,6 +87,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [speed, setSpeed] = useState(false);
+  const prefs = useMutation({ mutationFn: (v: boolean) => api<User>('/users/me/prefs', { method: 'PATCH', json: { notifyByEmail: v } }), onSuccess: (u) => setUser({ ...me, ...u }) });
 
   const notifs = useQuery({ queryKey: ['notifications'], queryFn: () => api<Notification[]>('/notifications'), refetchInterval: 120_000 });
   const unread = (notifs.data ?? []).filter((n) => !n.readAt).length;
@@ -126,6 +127,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
           {menuOpen && (
             <Popover onClose={() => setMenuOpen(false)}>
               <div className="li" style={{ padding: '12px 14px' }}><div className="grow"><b>{me.name}</b><small>{me.email}</small></div></div>
+              <label className="li check" style={{ padding: '10px 14px' }}><input type="checkbox" checked={me.notifyByEmail} onChange={(e) => prefs.mutate(e.target.checked)} />Email me notifications</label>
               <div className="li click" style={{ padding: '10px 14px' }} onClick={logout}><Icon name="left" className="sm" /><div className="grow"><b>Sign out</b></div></div>
             </Popover>
           )}

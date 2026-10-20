@@ -7,7 +7,7 @@ import { ago, kmoney, money, pct } from '../lib/format';
 import { useOpenLead } from '../lib/leadLink';
 import { Icon } from '../components/Icon';
 import { Avatar, colorFor, Loading, PageHead, StagePill } from '../components/ui';
-import { downloadCsv } from './Book';
+import { downloadCsv } from '../lib/csv';
 
 type Report = {
   production: { month: string; premium: number }[];

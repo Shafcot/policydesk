@@ -52,6 +52,12 @@ export const users = pgTable('users', {
   maxCallsPerDay: integer('max_calls_per_day').notNull().default(100),
   monthlyTarget: money('monthly_target').notNull().default(0),
   inviteToken: varchar('invite_token', { length: 80 }),
+  resetToken: varchar('reset_token', { length: 80 }),
+  resetExpiresAt: ts('reset_expires_at'),
+  /** Public booking page slug: /book/<slug>. */
+  bookingSlug: varchar('booking_slug', { length: 60 }).unique(),
+  /** Email copies of notifications (SOW 5: bell + email). */
+  notifyByEmail: boolean('notify_by_email').notNull().default(true),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
 }, (t) => [index('users_agency_idx').on(t.agencyId)]);
@@ -218,6 +224,18 @@ export const templates = pgTable('templates', {
   name: varchar('name', { length: 80 }).notNull(),
   subject: varchar('subject', { length: 240 }),
   body: text('body').notNull(),
+  createdAt: createdAt(),
+});
+
+/** Emails to the team (invites, password resets, notification copies). Lead/customer messages live in `messages`. */
+export const teamEmails = pgTable('team_emails', {
+  id: id(),
+  agencyId: uuid('agency_id').references(() => agencies.id, { onDelete: 'cascade' }),
+  to: varchar('to', { length: 200 }).notNull(),
+  subject: varchar('subject', { length: 240 }).notNull(),
+  body: text('body').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('queued'),
+  error: text('error'),
   createdAt: createdAt(),
 });
 

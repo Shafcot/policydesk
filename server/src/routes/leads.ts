@@ -194,3 +194,48 @@ leadsRouter.get('/queue/mine', ah<AuthedRequest>(async (req, res) => {
   rows.filter((l) => l.stage === 'attempted' && l.attempts < st.maxAttempts && (!l.lastAttemptAt || now - +l.lastAttemptAt > st.retryHours * 3600e3)).sort((a, b) => +(a.lastAttemptAt ?? 0) - +(b.lastAttemptAt ?? 0)).forEach((lead) => q.push({ bucket: 'retry', lead }));
   res.json(q);
 }));
+
+/**
+ * Spreadsheet import (SOW 7: leads from the old CRM / vendors). Rows are mapped to these fields in the browser.
+ * Duplicates (same phone as an existing lead) are skipped and reported. Imported leads don't start automations unless asked.
+ */
+leadsRouter.post('/import', requireAdmin, ah<AuthedRequest>(async (req, res) => {
+  const Row = z.object({
+    firstName: z.string().max(80).optional(), lastName: z.string().max(80).optional(), name: z.string().max(160).optional(),
+    phone: z.string().max(40).optional(), email: z.string().max(200).optional(), company: z.string().max(160).optional(),
+    line: z.string().max(40).optional(), source: z.string().max(80).optional(), stage: z.string().max(40).optional(),
+    agentEmail: z.string().max(200).optional(), notes: z.string().max(5000).optional(), createdAt: z.string().max(40).optional(),
+  });
+  const b = z.object({ rows: z.array(Row).min(1).max(10000), defaultSource: z.string().min(1).max(80), autoAssign: z.boolean().default(true), runAutomations: z.boolean().default(false) }).parse(req.body);
+  const team = await db.query.users.findMany({ where: eq(users.agencyId, req.user.agencyId) });
+  const existing = await db.select({ phone: leads.phone }).from(leads).where(eq(leads.agencyId, req.user.agencyId));
+  const seen = new Set(existing.map((l) => l.phone.replace(/\D/g, '').slice(-10)));
+  const stageByName = new Map(STAGES.map((k) => [k, k] as const));
+  Object.entries({ 'new': 'new', 'contact attempted': 'attempted', 'needs follow-up': 'followup', 'follow up': 'followup', 'ready to quote': 'ready', 'quoted': 'quoted', 'won': 'won', 'sold': 'won', 'lost': 'lost', 'ready for re-quote': 'requote', 'recycled': 'recycled' } as const)
+    .forEach(([k, v]) => stageByName.set(k as never, v));
+  let imported = 0, duplicates = 0; const skipped: { row: number; reason: string }[] = [];
+  for (const [i, r] of b.rows.entries()) {
+    const rowNo = i + 2; // header is row 1
+    const [first, ...rest] = (r.name ?? '').trim().split(/\s+/);
+    const firstName = (r.firstName || first || '').trim(), lastName = (r.lastName || rest.join(' ') || '').trim();
+    const phone = (r.phone ?? '').trim();
+    if (!firstName || phone.replace(/\D/g, '').length < 7) { skipped.push({ row: rowNo, reason: 'Missing name or phone' }); continue; }
+    const key = phone.replace(/\D/g, '').slice(-10);
+    if (seen.has(key)) { duplicates++; continue; }
+    seen.add(key);
+    const line = LINES.find((l) => l.toLowerCase() === (r.line ?? '').trim().toLowerCase()) ?? 'Auto';
+    const stage = stageByName.get((r.stage ?? '').trim().toLowerCase() as never) ?? 'new';
+    let agentId = team.find((u) => u.email.toLowerCase() === (r.agentEmail ?? '').trim().toLowerCase())?.id ?? null;
+    if (!agentId && b.autoAssign && stage !== 'won') agentId = (await pickAgent({ agencyId: req.user.agencyId, line }))?.id ?? null;
+    const created = r.createdAt && !Number.isNaN(Date.parse(r.createdAt)) ? new Date(r.createdAt) : new Date();
+    const [lead] = await db.insert(leads).values({
+      agencyId: req.user.agencyId, firstName: firstName.slice(0, 80), lastName: (lastName || '-').slice(0, 80), phone, email: r.email?.trim() || null,
+      company: r.company?.trim() || null, line, type: lineType(line), source: r.source?.trim() || b.defaultSource, stage, agentId, createdAt: created, stageChangedAt: created,
+    }).returning();
+    await db.insert(notes).values({ leadId: lead.id, body: `Imported from spreadsheet (${b.defaultSource}).${r.notes ? `\n\n${r.notes}` : ''}` });
+    if (b.runAutomations) await fire(db, 'new_lead', { agencyId: req.user.agencyId, leadId: lead.id });
+    imported++;
+  }
+  if (imported) await notify(db, { agencyId: req.user.agencyId, userId: null, kind: 'lead', text: `${imported} leads imported from a spreadsheet` });
+  res.json({ imported, duplicates, skipped: skipped.slice(0, 200) });
+}));

@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { bookingLink, fillTemplate, useTemplates } from '../lib/hooks';
+import { bookingLink, fillTemplate, useTeam, useTemplates } from '../lib/hooks';
 import { useToast } from '../lib/toast';
 import { Icon } from './Icon';
 
-type LeadLite = { id: string; firstName: string; line: string; email: string | null; optOut: boolean; agentName?: string | null };
+type LeadLite = { id: string; firstName: string; line: string; email: string | null; optOut: boolean; agentId?: string | null; agentName?: string | null };
 
 /** SMS / email composer with saved templates. Messages queue until Twilio/SendGrid are connected (Milestone 3). */
 export function Composer({ lead, channel }: { lead: LeadLite; channel: 'sms' | 'email' }) {
@@ -14,6 +14,7 @@ export function Composer({ lead, channel }: { lead: LeadLite; channel: 'sms' | '
   const toast = useToast();
   const { user, agency } = useAuth();
   const tpls = useTemplates();
+  const team = useTeam();
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const send = useMutation({
@@ -26,7 +27,8 @@ export function Composer({ lead, channel }: { lead: LeadLite; channel: 'sms' | '
   const agentName = lead.agentName ?? user?.name ?? '';
   const useTpl = (id: string) => {
     const t = tpls.data?.find((x) => x.id === id); if (!t) return;
-    const v = { first: lead.firstName, agent: agentName, agency: agency?.name ?? '', line: lead.line, booking: bookingLink(agentName) };
+    const owner = (team.data ?? []).find((u) => u.id === (lead.agentId ?? user?.id));
+    const v = { first: lead.firstName, agent: agentName, agency: agency?.name ?? '', line: lead.line, booking: bookingLink(owner?.bookingSlug ?? user?.bookingSlug) };
     setBody(fillTemplate(t.body, v)); if (t.subject) setSubject(fillTemplate(t.subject, v));
   };
   return (
