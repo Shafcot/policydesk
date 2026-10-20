@@ -111,11 +111,11 @@ type Settings = {
   attemptsDay1: number; attemptsPerDay: number; maxAttempts: number; retryHours: number; requoteMonths: number; autoRequote: boolean; autoRecycle: boolean;
   teamTarget: number; teamTargetVisible: boolean; businessDays: string[]; businessOpen: string; businessClose: string; timezone: string;
   reviewLinks: { google: string; facebook: string; yelp: string }; optOutKeywords: string[];
-  customFields: { key: string; label: string; type: 'text' | 'number' | 'date' }[]; reminderMinutes: number;
+  customFields: { key: string; label: string; type: 'text' | 'number' | 'date' }[]; reminderMinutes: number; screeningQuestions: string[];
 };
 type SettingsResp = { agency: { name: string; brandName: string; brandColor: string | null; logoUrl: string | null }; settings: Settings };
 
-const TABS = [['assignment', 'Lead assignment'], ['calls', 'Call schedule'], ['pipeline', 'Pipeline rules'], ['fields', 'Custom fields'], ['sources', 'Lead sources'], ['templates', 'Message templates'], ['reviews', 'Review links'], ['hours', 'Business hours'], ['brand', 'Branding'], ['optout', 'Opt-out']] as const;
+const TABS = [['assignment', 'Lead assignment'], ['calls', 'Call schedule'], ['pipeline', 'Pipeline rules'], ['fields', 'Custom fields'], ['sources', 'Lead sources'], ['templates', 'Message templates'], ['reviews', 'Review links'], ['hours', 'Business hours'], ['brand', 'Branding'], ['optout', 'Opt-out'], ['integrations', 'Integrations']] as const;
 type Tab = (typeof TABS)[number][0];
 
 export function SettingsPage() {
@@ -193,6 +193,7 @@ export function SettingsPage() {
             <p>When a lead replies with any of these words, they’re removed from every SMS, email, automation and campaign.</p>
             <div className="field"><label htmlFor="oo">Keywords (comma separated)</label><input id="oo" className="input mono" value={s.optOutKeywords.join(', ')} onChange={(e) => set('optOutKeywords', e.target.value.split(',').map((x) => x.trim().toUpperCase()).filter(Boolean))} /></div>
           </>}
+          {tab === 'integrations' && <Integrations questions={s.screeningQuestions} onQuestions={(v) => set('screeningQuestions', v)} />}
           {savesHere && <div className="row" style={{ justifyContent: 'flex-end' }}>{dirty && <button className="btn" onClick={() => { setDraft({}); setAgency({}); }}>Discard</button>}<button className="btn primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>Save changes</button></div>}
         </div></section>
       </div>
@@ -268,6 +269,64 @@ function Templates() {
           </div>
         </Modal>
       )}
+    </>
+  );
+}
+
+type Status = { voice: boolean; sms: boolean; email: boolean; inboundEmail: boolean; ai: boolean; push: boolean; facebook: boolean; googleAds: boolean; webhooks: Record<string, string> };
+const INTEGRATIONS: { key: keyof Omit<Status, 'webhooks'>; name: string; does: string; needs: string }[] = [
+  { key: 'voice', name: 'Twilio Voice', does: 'Browser calling, power dialer, recordings, inbound calls', needs: 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID, PUBLIC_API_URL' },
+  { key: 'sms', name: 'Twilio SMS', does: 'Two-way texting, STOP handling, delivery status', needs: 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_SERVICE_SID (A2P 10DLC approved)' },
+  { key: 'email', name: 'SendGrid email', does: 'Emails to leads, invites, password resets, notification emails', needs: 'SENDGRID_API_KEY, SENDGRID_FROM_EMAIL (verified sender / domain)' },
+  { key: 'inboundEmail', name: 'SendGrid Inbound Parse', does: 'Email replies land in the inbox and stop automations', needs: 'SENDGRID_INBOUND_DOMAIN, SENDGRID_INBOUND_KEY' },
+  { key: 'ai', name: 'OpenAI', does: 'Call transcripts, call summaries, AI speed-to-lead replies', needs: 'OPENAI_API_KEY' },
+  { key: 'push', name: 'Firebase push', does: 'Browser push notifications', needs: 'FIREBASE_SERVICE_ACCOUNT_JSON (server) + VITE_FIREBASE_* (app build)' },
+  { key: 'facebook', name: 'Facebook Lead Ads', does: 'Facebook / Instagram leads arrive automatically', needs: 'FACEBOOK_APP_SECRET, FACEBOOK_VERIFY_TOKEN, FACEBOOK_PAGE_ACCESS_TOKEN' },
+  { key: 'googleAds', name: 'Google Ads lead forms', does: 'Google lead form submissions arrive automatically', needs: 'GOOGLE_ADS_WEBHOOK_KEY' },
+];
+
+function Integrations({ questions, onQuestions }: { questions: string[]; onQuestions: (v: string[]) => void }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const status = useQuery({ queryKey: ['integrations'], queryFn: () => api<Status>('/integrations/status') });
+  const lookups = useLookups();
+  const team = useTeam();
+  const copy = (t: string) => navigator.clipboard.writeText(t).then(() => toast('Copied'), () => toast(t, 'copy'));
+  const setNumber = useMutation({
+    mutationFn: (b: { id: string; number: string | null }) => api(`/admin/users/${b.id}/twilio-number`, { method: 'PATCH', json: { number: b.number } }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); toast('Phone number saved'); },
+    onError: (e) => toast(err(e, 'Use the +1XXXXXXXXXX format'), 'alert'),
+  });
+  if (!status.data) return <Loading />;
+  const origin = status.data.webhooks.leads.replace('/webhooks/leads/<source key>', '');
+  return (
+    <>
+      <h2>Integrations</h2>
+      <p className="help">Each service switches on when its keys are added to the server’s .env file and the server restarts. Nothing else changes in the app.</p>
+      <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Service</th><th>What it does</th><th>Status</th></tr></thead><tbody>
+        {INTEGRATIONS.map((i) => <tr key={i.key}><td><b>{i.name}</b><small className="muted" style={{ display: 'block', maxWidth: 320, whiteSpace: 'normal' }}>{i.needs}</small></td><td>{i.does}</td><td>{status.data![i.key] ? <Pill color="--ok">Connected</Pill> : <Pill color="--s9">Not connected</Pill>}</td></tr>)}
+      </tbody></table></div>
+      <div className="sep" /><h3>Webhook addresses</h3>
+      <p className="help">Paste these into each provider’s dashboard.</p>
+      <div className="list">{Object.entries({ 'Twilio TwiML App → Voice URL': status.data.webhooks.twilioVoiceApp, 'Twilio phone numbers → A call comes in': status.data.webhooks.twilioInbound, 'Twilio Messaging Service → incoming messages': status.data.webhooks.twilioSms, 'SendGrid Inbound Parse URL': status.data.webhooks.sendgridInbound, 'Facebook app → Webhooks (Page, leadgen)': status.data.webhooks.facebook, 'Google Ads lead form → Webhook URL': status.data.webhooks.googleAds }).map(([k, v]) => (
+        <div className="li" key={k}><div className="grow"><b>{k}</b><small className="mono">{v}</small></div><button className="icon-btn sm" onClick={() => copy(v)} aria-label={`Copy ${k}`}><Icon name="copy" className="sm" /></button></div>
+      ))}</div>
+      <div className="sep" /><h3>Lead vendors & website forms</h3>
+      <p className="help">Give each vendor its own address. They POST JSON or form data with first_name, last_name (or full_name), phone, email, zip and insurance_type. Duplicates by phone are ignored.</p>
+      <div className="list">{(lookups.data?.sources ?? []).filter((x) => x.webhookKey).map((x) => { const url = `${origin}/webhooks/leads/${x.webhookKey}`; return (
+        <div className="li" key={x.id}><div className="grow"><b>{x.name}</b><small className="mono">{url}</small></div><button className="icon-btn sm" onClick={() => copy(url)} aria-label={`Copy ${x.name} URL`}><Icon name="copy" className="sm" /></button></div>
+      ); })}</div>
+      <div className="sep" /><h3>Agent phone numbers</h3>
+      <p className="help">Each agent’s Twilio number is their caller ID, and calls to it ring that agent in the browser.</p>
+      <div className="list">{(team.data ?? []).filter((u) => u.role === 'agent').map((u) => (
+        <div className="li" key={u.id}><div className="grow"><b>{u.name}</b></div>
+          <input className="input mono" style={{ width: 170 }} placeholder="+15125550123" defaultValue={u.twilioNumber ?? ''} aria-label={`${u.name} Twilio number`}
+            onBlur={(e) => { const v = e.target.value.trim(); if (v !== (u.twilioNumber ?? '')) setNumber.mutate({ id: u.id, number: v || null }); }} /></div>
+      ))}</div>
+      <div className="sep" /><h3>Speed-to-lead screening questions</h3>
+      <p className="help">The AI reply asks these when a new lead arrives and no agent is free (needs OpenAI). Save with the button below.</p>
+      {questions.map((q, i) => <div className="row" key={i} style={{ flexWrap: 'nowrap' }}><input className="input" value={q} onChange={(e) => onQuestions(questions.map((x, j) => (j === i ? e.target.value : x)))} aria-label={`Question ${i + 1}`} /><button className="icon-btn sm" onClick={() => onQuestions(questions.filter((_, j) => j !== i))} aria-label="Remove question"><Icon name="trash" className="sm" /></button></div>)}
+      {questions.length < 6 && <button className="btn sm" style={{ justifySelf: 'start' }} onClick={() => onQuestions([...questions, ''])}><Icon name="plus" className="sm" />Add question</button>}
     </>
   );
 }

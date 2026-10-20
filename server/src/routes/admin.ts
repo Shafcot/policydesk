@@ -88,6 +88,7 @@ const SettingsPatch = z.object({
   optOutKeywords: z.array(z.string().min(1).max(20)).min(1),
   customFields: z.array(z.object({ key: z.string().regex(/^[a-z0-9_]+$/).max(40), label: z.string().min(1).max(60), type: z.enum(['text', 'number', 'date']) })).max(30),
   reminderMinutes: z.number().int().min(0).max(1440),
+  screeningQuestions: z.array(z.string().max(200)).max(6).transform((a) => a.map((q) => q.trim()).filter(Boolean)),
 }).partial();
 
 adminRouter.patch('/settings', ah<AuthedRequest>(async (req, res) => {
@@ -101,7 +102,7 @@ adminRouter.patch('/settings', ah<AuthedRequest>(async (req, res) => {
 
 adminRouter.post('/lead-sources', ah<AuthedRequest>(async (req, res) => {
   const b = z.object({ name: z.string().min(1).max(80), costPerLead: z.number().min(0).default(0), isVendor: z.boolean().default(false) }).parse(req.body);
-  const [s] = await db.insert(leadSources).values({ ...b, agencyId: req.user.agencyId }).returning();
+  const [s] = await db.insert(leadSources).values({ ...b, agencyId: req.user.agencyId, webhookKey: randomBytes(16).toString('hex') }).returning();
   res.status(201).json(s);
 }));
 adminRouter.patch('/lead-sources/:id', ah<AuthedRequest>(async (req, res) => {

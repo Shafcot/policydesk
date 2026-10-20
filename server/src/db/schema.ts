@@ -58,6 +58,8 @@ export const users = pgTable('users', {
   bookingSlug: varchar('booking_slug', { length: 60 }).unique(),
   /** Email copies of notifications (SOW 5: bell + email). */
   notifyByEmail: boolean('notify_by_email').notNull().default(true),
+  /** Agent's Twilio number (E.164). Used as caller ID and to route inbound calls. */
+  twilioNumber: varchar('twilio_number', { length: 20 }),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
 }, (t) => [index('users_agency_idx').on(t.agencyId)]);
@@ -68,6 +70,8 @@ export const leadSources = pgTable('lead_sources', {
   name: varchar('name', { length: 80 }).notNull(),
   costPerLead: money('cost_per_lead').notNull().default(0),
   isVendor: boolean('is_vendor').notNull().default(false),
+  /** Secret part of this source's webhook URL (/webhooks/leads/<key>) for vendors and website forms. */
+  webhookKey: varchar('webhook_key', { length: 48 }).unique(),
 });
 
 export const leads = pgTable('leads', {
@@ -116,6 +120,9 @@ export const calls = pgTable('calls', {
   transcript: jsonb('transcript').$type<{ speaker: string; text: string }[]>(),
   summary: text('summary'),
   notes: text('notes'),
+  /** Twilio CallSid of the agent's call leg, used to attach the recording. */
+  twilioSid: varchar('twilio_sid', { length: 64 }),
+  transcriptStatus: varchar('transcript_status', { length: 20 }),
 }, (t) => [index('calls_lead_idx').on(t.leadId), index('calls_user_started_idx').on(t.userId, t.startedAt)]);
 
 export const notes = pgTable('notes', {
@@ -139,6 +146,8 @@ export const messages = pgTable('messages', {
   automated: boolean('automated').notNull().default(false),
   /** queued = waiting for the SMS/email provider (connected in Milestone 3). */
   status: varchar('status', { length: 20 }).notNull().default('sent'),
+  providerId: varchar('provider_id', { length: 80 }),
+  error: text('error'),
   readAt: ts('read_at'),
   createdAt: createdAt(),
 }, (t) => [index('messages_lead_idx').on(t.leadId)]);
@@ -236,6 +245,22 @@ export const teamEmails = pgTable('team_emails', {
   body: text('body').notNull(),
   status: varchar('status', { length: 20 }).notNull().default('queued'),
   error: text('error'),
+  createdAt: createdAt(),
+});
+
+/** Recordings reported by Twilio before or after the agent logs the call; matched on CallSid. */
+export const callRecordings = pgTable('call_recordings', {
+  callSid: varchar('call_sid', { length: 64 }).primaryKey(),
+  recordingSid: varchar('recording_sid', { length: 64 }).notNull(),
+  url: text('url').notNull(),
+  durationSec: integer('duration_sec').notNull().default(0),
+  createdAt: createdAt(),
+});
+
+/** Browser push (Firebase Cloud Messaging) registrations. */
+export const deviceTokens = pgTable('device_tokens', {
+  token: text('token').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   createdAt: createdAt(),
 });
 

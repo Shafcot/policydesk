@@ -77,6 +77,6 @@ npm run db:migrate
 | --- | --- | --- |
 | 1 · Frontend | All screens, including the automation builder and campaigns | Done |
 | 2 · Backend | Automation engine, worker, campaigns, tasks, live updates, lead import, booking pages, team emails, password reset, login rate limit, daily backups | Done |
-| 3 · Integrations & testing | Twilio, SendGrid, OpenAI, Firebase, lead sources, data migration | Not started |
+| 3 · Integrations & testing | Twilio calling/recording/SMS, SendGrid, OpenAI, Firebase push, Facebook/Google/vendor lead webhooks — built; switch on with keys (see INTEGRATIONS.md) | Built, awaiting client accounts |
 
 Hosting is not decided yet. Nothing in the code is tied to a provider; file storage goes through a local-disk driver that can be swapped for S3-compatible storage later.

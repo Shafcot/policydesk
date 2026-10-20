@@ -66,6 +66,8 @@ export type AgencySettings = {
   optOutKeywords: string[];
   customFields: { key: string; label: string; type: 'text' | 'number' | 'date' }[];
   reminderMinutes: number;
+  /** Speed-to-lead screening questions used by the AI reply (SOW 4). */
+  screeningQuestions: string[];
 };
 
 export const DEFAULT_SETTINGS: AgencySettings = {
@@ -93,6 +95,7 @@ export const DEFAULT_SETTINGS: AgencySettings = {
     { key: 'carrier', label: 'Current carrier', type: 'text' },
   ],
   reminderMinutes: 10,
+  screeningQuestions: ['What ZIP code is the property or vehicle in?', 'Who insures you now?', 'When does your current policy renew?'],
 };
 
 export const CARRIERS = ['Progressive', 'Travelers', 'Safeco', 'Nationwide', 'The Hartford', 'Liberty Mutual', 'Hiscox'] as const;

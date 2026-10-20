@@ -67,7 +67,8 @@ wonRouter.post('/:id/won', ah<AuthedRequest>(async (req, res) => {
 export const metaRouter = Router();
 metaRouter.get('/lookups', ah<AuthedRequest>(async (req, res) => {
   const sources = await db.select().from(leadSources).where(eq(leadSources.agencyId, req.user.agencyId));
-  res.json({ sources, carriers: CARRIERS, lines: LINES });
+  // Webhook keys are secrets: only admins see them.
+  res.json({ sources: sources.map((x) => (req.user.role === 'admin' ? x : { ...x, webhookKey: null })), carriers: CARRIERS, lines: LINES });
 }));
 metaRouter.post('/auto-moves', requireAdmin, ah<AuthedRequest>(async (req, res) => {
   res.json({ moved: await runAutoMoves(req.user.agencyId) });

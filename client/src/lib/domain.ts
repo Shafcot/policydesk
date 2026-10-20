@@ -25,7 +25,7 @@ export type AgentStatus = 'available' | 'oncall' | 'offline';
 export type User = {
   id: string; agencyId: string; name: string; email: string; phone: string | null; role: Role; status: AgentStatus;
   lines: string[]; hoursStart: string; hoursEnd: string; daysOff: string[]; minCallsPerDay: number; maxCallsPerDay: number;
-  monthlyTarget: number; active: boolean; createdAt: string; callsToday?: number; invited?: boolean; bookingSlug: string | null; notifyByEmail: boolean;
+  monthlyTarget: number; active: boolean; createdAt: string; callsToday?: number; invited?: boolean; bookingSlug: string | null; notifyByEmail: boolean; twilioNumber?: string | null;
 };
 export type Agency = { id: string; name: string; brandName: string; brandColor: string | null; logoUrl: string | null };
 
@@ -36,7 +36,7 @@ export type Lead = {
   followUpAt: string | null; callbackRequested: boolean; quotePremium: number | null; optOut: boolean; automation: string | null;
   custom: Record<string, string>; createdAt: string; flags?: string[];
 };
-export type Call = { id: string; startedAt: string; durationSec: number; result: CallResult; recordingUrl: string | null; summary: string | null; notes: string | null; transcript: { speaker: string; text: string }[] | null; userName: string | null };
+export type Call = { id: string; startedAt: string; durationSec: number; result: CallResult; recordingUrl: string | null; summary: string | null; notes: string | null; transcript: { speaker: string; text: string }[] | null; transcriptStatus: string | null; userName: string | null };
 export type Note = { id: string; body: string; createdAt: string; userName: string | null };
 export type Message = { id: string; channel: 'sms' | 'email'; direction: 'in' | 'out'; subject: string | null; body: string; automated: boolean; status: string; createdAt: string };
 export type Appointment = { id: string; startsAt: string; durationMin: number; type: string; status: 'scheduled' | 'done' | 'noshow' | 'cancelled'; userId: string };

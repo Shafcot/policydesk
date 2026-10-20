@@ -8,6 +8,8 @@ import { nextBusinessTime, isBusinessTime } from './hours.js';
 import { contactFor, fill, queueMessage, varsFor, type Recipient } from './messaging.js';
 import { getSettings, notify, pickAgent, setStage } from './rules.js';
 import { emitLead } from './realtime.js';
+import { enabled } from '../integrations/settings.js';
+import { aiSpeedToLead } from '../integrations/providers.js';
 
 type Exec = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -104,7 +106,13 @@ async function act(x: Exec, run: AutomationRun, a: Automation, s: Extract<Step, 
       const def = DEFAULT_TEXT[s.action];
       const channel = tpl?.channel ?? def.channel;
       const v = await varsFor(x, contact);
-      const m = await queueMessage(x, r, { channel, body: fill(tpl?.body ?? def.body, v), subject: fill(tpl?.subject ?? def.subject ?? '', v), automated: true });
+      let body = fill(tpl?.body ?? def.body, v);
+      if (s.action === 'ai_reply' && !tpl && enabled.ai()) {
+        // Personalised first reply with the agency's screening questions; falls back to the template text on any error.
+        const st = await getSettings(contact.agencyId, x);
+        body = (await aiSpeedToLead({ first: contact.first, agency: v.agency, line: contact.line, questions: st.screeningQuestions, booking: v.booking }).catch(() => '')) || body;
+      }
+      const m = await queueMessage(x, r, { channel, body, subject: fill(tpl?.subject ?? def.subject ?? '', v), automated: true });
       return m ? `Queued ${channel.toUpperCase()}: ${tpl?.name ?? s.action.replace(/_/g, ' ')}` : `Skipped ${channel.toUpperCase()} (opted out or no ${channel === 'sms' ? 'phone' : 'email'})`;
     }
     case 'create_task': {

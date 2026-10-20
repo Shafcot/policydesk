@@ -9,6 +9,7 @@ import {
   agencies, appointments, templates, favorites, campaigns, calls, customers, leads, leadSources, messages, notes, notifications, policies, sales, users,
 } from './schema.js';
 import { CARRIERS, COMMERCIAL_LINES, DEFAULT_SETTINGS, NOT_REACHED, PERSONAL_LINES, lineType, type CallResult, type Stage } from '../domain.js';
+import { randomBytes } from 'node:crypto';
 import { hashPassword } from '../lib/auth.js';
 import { installDefaultAutomations } from '../services/automation.js';
 
@@ -81,7 +82,7 @@ async function main() {
   ]);
 
   const sourceDefs = [['Facebook Ads', 18, false], ['Google Ads', 32, false], ['EverQuote', 24, true], ['MediaAlpha', 21, true], ['Website Form', 0, false], ['Referral', 0, false], ['Instagram', 12, false]] as const;
-  await db.insert(leadSources).values(sourceDefs.map(([name, costPerLead, isVendor]) => ({ agencyId: agency.id, name, costPerLead, isVendor })));
+  await db.insert(leadSources).values(sourceDefs.map(([name, costPerLead, isVendor]) => ({ agencyId: agency.id, name, costPerLead, isVendor, webhookKey: randomBytes(16).toString('hex') })));
   const sourceNames = sourceDefs.map((d) => d[0]);
 
   const plan: [Stage, number][] = [['new', 10], ['attempted', 10], ['followup', 9], ['ready', 6], ['quoted', 8], ['won', 9], ['lost', 5], ['requote', 3], ['recycled', 3]];

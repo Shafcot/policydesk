@@ -1,7 +1,9 @@
 // Business rules from SOW section 6: lead assignment, call result → stage, auto-moves, notifications.
 import { and, eq, gte, inArray, isNull, lt, max, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { agencies, appointments, calls, leads, notes, notifications, users, type Lead, type User } from '../db/schema.js';
+import { agencies, appointments, calls, deviceTokens, leads, notes, notifications, users, type Lead, type User } from '../db/schema.js';
+import { enabled } from '../integrations/settings.js';
+import { pushTo } from '../integrations/providers.js';
 import { fire, stopRuns } from './automation.js';
 import { emit } from './realtime.js';
 import { sendTeamEmail } from './mailer.js';
@@ -20,6 +22,14 @@ export async function notify(x: Exec, n: { agencyId: string; userId?: string | n
   const [row] = await x.insert(notifications).values({ agencyId: n.agencyId, userId: n.userId ?? null, kind: n.kind, text: n.text, leadId: n.leadId ?? null }).returning();
   // Live push (bell + toast). Email copies of notifications are sent once SendGrid is connected.
   emit(n.agencyId, n.userId ?? null, 'notification', row);
+  if (enabled.push()) {
+    const ids = n.userId ? [n.userId] : (await x.query.users.findMany({ where: and(eq(users.agencyId, n.agencyId), eq(users.role, 'admin'), eq(users.active, true)) })).map((u) => u.id);
+    const toks = ids.length ? (await x.select().from(deviceTokens).where(inArray(deviceTokens.userId, ids))).map((t) => t.token) : [];
+    if (toks.length) setImmediate(() => {
+      pushTo(toks, { title: 'Policy-desk CRM', body: n.text, link: n.leadId ? `${env.CLIENT_ORIGIN}/?lead=${n.leadId}` : env.CLIENT_ORIGIN })
+        .then((bad) => (bad.length ? db.delete(deviceTokens).where(inArray(deviceTokens.token, bad)) : null)).catch((e) => console.error('push failed', e));
+    });
+  }
   if (EMAIL_KINDS.has(n.kind)) {
     const to = n.userId
       ? await x.query.users.findMany({ where: and(eq(users.id, n.userId), eq(users.notifyByEmail, true), eq(users.active, true)) })
@@ -85,7 +95,7 @@ export async function setStage(x: Exec, lead: Lead, stage: Stage, actor: { id: s
 /** Logs a call and applies the SOW's call-result rules. Returns the updated lead. */
 export async function recordCall(
   lead: Lead, user: User,
-  input: { result: CallResult; durationSec?: number; notes?: string; recordingUrl?: string; summary?: string; transcript?: { speaker: string; text: string }[] },
+  input: { result: CallResult; durationSec?: number; notes?: string; recordingUrl?: string; summary?: string; transcript?: { speaker: string; text: string }[]; callSid?: string },
 ): Promise<Lead> {
   const st = await getSettings(lead.agencyId);
   return db.transaction(async (tx) => {
@@ -93,7 +103,7 @@ export async function recordCall(
     await tx.insert(calls).values({
       leadId: lead.id, userId: user.id, startedAt: now, result: input.result,
       durationSec: input.durationSec ?? 0, notes: input.notes, recordingUrl: input.recordingUrl,
-      summary: input.summary, transcript: input.transcript,
+      summary: input.summary, transcript: input.transcript, twilioSid: input.callSid ?? null,
     });
     const reached = !NOT_REACHED.includes(input.result);
     const attempts = lead.attempts + 1;
