@@ -1,0 +1,26 @@
+# Builds the app and publishes a ready-to-run copy (with server/dist and client/dist) to the `hostinger` branch.
+# Hostinger deploys that branch, so it never has to build anything itself.
+name: Publish hostinger branch
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: hostinger-branch, cancel-in-progress: true }
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - name: Commit build output to the hostinger branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B hostinger
+          git add -f server/dist client/dist
+          git commit -q -m "Hostinger build of ${GITHUB_SHA::7}"
+          git push -f origin hostinger
