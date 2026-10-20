@@ -42,6 +42,8 @@ Every API route except login requires a signed-in user, and every check happens 
 - **Only the owner** (or the Super Admin) can log calls on a lead, and a lead on a live call is locked for everyone else.
 - **Admin-only actions** (reassigning leads, bulk actions, auto-moves, user settings) return 403 for agents.
 
+Until Twilio/SendGrid are connected (Milestone 3), the dialer has agents dial from their own phone while the app picks, locks and times each call, and outgoing texts/emails are saved as **queued**.
+
 Business rules live in `server/src/services/rules.ts`: lead auto-assignment (round robin / availability / line of insurance, skipping offline or at-limit agents), call result → stage, retries, call-backs, recycling and the 5-month re-quote.
 
 ## Database changes
@@ -57,7 +59,7 @@ npm run db:migrate
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| 1 · Frontend | Login, roles, dashboards, leads, lead page, pipeline | In progress — dialer, calendar, inbox, customers, sales, targets, reports, users, settings next |
+| 1 · Frontend | All screens: dashboards, leads, lead page, pipeline, dialer + speed dial, calendar, inbox, customers & policies, sales, targets, reports, users, settings | Done except the automation builder and campaigns screens (next) |
 | 2 · Backend | Automations, scheduled jobs, live updates (Socket.IO), reports, imports | Not started |
 | 3 · Integrations & testing | Twilio, SendGrid, OpenAI, Firebase, lead sources, data migration | Not started |
 

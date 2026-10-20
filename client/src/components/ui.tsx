@@ -14,9 +14,14 @@ export const Pill = ({ color, children }: { color: string; children: ReactNode }
 );
 
 const AGENT_COLORS = ['--s1', '--s4', '--s5', '--s2', '--s8', '--s3'];
+const assigned = new Map<string, string>();
+/** Gives each team member a distinct colour in team order (called when the team list loads). */
+export const registerTeamColors = (ids: string[]) => ids.forEach((id, i) => assigned.set(id, AGENT_COLORS[i % AGENT_COLORS.length]));
 /** Stable colour per person id. */
 export const colorFor = (id: string | null | undefined) => {
   if (!id) return '--s9';
+  const known = assigned.get(id);
+  if (known) return known;
   let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) | 0;
   return AGENT_COLORS[Math.abs(h) % AGENT_COLORS.length];
 };

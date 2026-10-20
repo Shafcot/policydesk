@@ -1,0 +1,157 @@
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, ApiError } from '../lib/api';
+import { useMe } from '../lib/auth';
+import { RESULTS, STG, fullName, type CallResult, type Lead, type Stage } from '../lib/domain';
+import { ago, dur, ftime, pct } from '../lib/format';
+import { usePublicSettings } from '../lib/hooks';
+import { useOpenLead } from '../lib/leadLink';
+import { useToast } from '../lib/toast';
+import { Icon } from '../components/Icon';
+import { Avatar, Bar, PageHead, StagePill } from '../components/ui';
+import { SpeedDial } from '../components/SpeedDial';
+import { WonModal } from '../components/WonModal';
+
+type QueueItem = { bucket: 'new' | 'callback' | 'followup' | 'retry'; lead: Lead };
+const BUCKETS: [QueueItem['bucket'], string][] = [['new', 'New leads'], ['callback', 'Requested call-backs'], ['followup', 'Follow-ups due today'], ['retry', 'No-answer retries']];
+const LABEL = { new: 'New lead', callback: 'Call-back', followup: 'Follow-up', retry: 'Retry' };
+
+/**
+ * Power dialer. Until Twilio is connected (Milestone 3) the agent dials on their own phone:
+ * the app picks the next lead in SOW order, locks it, times the call and logs the result.
+ */
+export function Dialer() {
+  const { me, isAdmin } = useMe();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const openLead = useOpenLead();
+  const settings = usePublicSettings();
+  const queue = useQuery({ queryKey: ['queue'], queryFn: () => api<QueueItem[]>('/leads/queue/mine'), refetchInterval: 30_000 });
+  const dash = useQuery({ queryKey: ['dashboard'], queryFn: () => api<{ callsToday: number }>('/dashboard') });
+  const [current, setCurrent] = useState<Lead | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const [note, setNote] = useState('');
+  const [auto, setAuto] = useState(false);
+  const [speed, setSpeed] = useState(false);
+  const [won, setWon] = useState<Lead | null>(null);
+  const autoRef = useRef(auto); autoRef.current = auto;
+
+  useEffect(() => { if (!startedAt) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [startedAt]);
+
+  const items = (queue.data ?? []).filter((x) => x.lead.id !== current?.id);
+  const onErr = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Something went wrong', 'alert');
+
+  const begin = useMutation({
+    mutationFn: (l: Lead) => api(`/leads/${l.id}/lock`, { method: 'POST' }).then(() => l),
+    onSuccess: (l) => { setCurrent(l); setStartedAt(Date.now()); setNow(Date.now()); setNote(''); },
+    onError: onErr,
+  });
+  const finish = useMutation({
+    mutationFn: (result: CallResult) => api<Lead & { stage: Stage }>(`/leads/${current!.id}/calls`, { method: 'POST', json: { result, durationSec: startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0, notes: note.trim() || undefined } }),
+    onSuccess: (l, result) => {
+      ['queue', 'dashboard', 'leads', 'lead'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      if (result === 'sold') { setWon(l); setAuto(false); } else toast(`${fullName(l)} → ${STG[l.stage].n}`);
+      setCurrent(null); setStartedAt(null);
+    },
+    onError: onErr,
+  });
+
+  // Power mode: when the previous call is logged, load and start the next lead automatically.
+  useEffect(() => {
+    if (!auto || current || begin.isPending || finish.isPending || !queue.data) return;
+    const next = (queue.data ?? [])[0];
+    if (!next) { setAuto(false); toast('Queue is empty. Unreached numbers return next shift.'); return; }
+    const t = setTimeout(() => { if (autoRef.current) begin.mutate(next.lead); }, 900);
+    return () => clearTimeout(t);
+  }, [auto, current, queue.data, begin, finish.isPending, toast]);
+
+  // Speed dial from the top bar lands here with ?call=<leadId>.
+  const [params, setParams] = useSearchParams();
+  const callId = params.get('call');
+  useEffect(() => {
+    if (!callId || current) return;
+    setParams((p) => { p.delete('call'); return p; }, { replace: true });
+    api<Lead>(`/leads/${callId}`).then((l) => begin.mutate(l)).catch(onErr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callId]);
+
+  const st = settings.data;
+  const calls = dash.data?.callsToday ?? 0;
+  return (
+    <>
+      <PageHead title="Dialer" sub="Queue order: new leads → requested call-backs → follow-ups due today → no-answer retries."
+        actions={<button className="btn" onClick={() => setSpeed(true)}><Icon name="grid" className="sm" />Speed dial</button>} />
+      <div className="dialer">
+        <div className="stack">
+          <section className="panel dial-stage">
+            {!current ? (
+              <div className="dial-idle">
+                <div className="ring"><Icon name="phone" /></div>
+                <h2>{auto ? 'Loading next lead…' : 'Power dialer'}</h2>
+                <p className="muted" style={{ maxWidth: 440 }}>Loads the next lead, locks it so no one else calls it, and times the call. Pick a result and the next lead loads automatically.</p>
+                {auto
+                  ? <button className="btn lg" onClick={() => setAuto(false)}><Icon name="pause" className="sm" />Pause dialing</button>
+                  : <button className="btn accent lg" disabled={!items.length} onClick={() => setAuto(true)}><Icon name="play" className="sm fill" />Start dialing · {items.length} in queue</button>}
+                {!isAdmin && <div style={{ width: 'min(360px,100%)' }}><div className="row between"><small className="muted">Calls today</small><small className="num">{calls} · min {me.minCallsPerDay} · max {me.maxCallsPerDay}</small></div><Bar value={pct(calls, me.maxCallsPerDay)} /></div>}
+              </div>
+            ) : (
+              <>
+                <div className="row between">
+                  <div className="live-lead"><Avatar name={fullName(current)} color={STG[current.stage].c} size="lg" /><div><h2>{fullName(current)}</h2><span className="muted">{current.line} · {current.type === 'commercial' ? 'Commercial' : 'Personal'}{current.company ? ` · ${current.company}` : ''}</span></div></div>
+                  <StagePill stage={current.stage} />
+                </div>
+                <div className="row between">
+                  <div className="call-state connected"><span className="pulse" />Dial <span className="mono" style={{ fontSize: 20 }}>{current.phone}</span></div>
+                  <span className="call-timer">{dur(startedAt ? (now - startedAt) / 1000 : 0)}</span>
+                </div>
+                <p className="help">Live calling and recording connect in Milestone 3 (Twilio). For now, dial from your phone and log the result here.</p>
+                <div className="kv">
+                  <div><span>Source</span><b>{current.source}</b></div>
+                  <div><span>Attempt</span><b className="num">{current.attempts + 1} of {st?.maxAttempts ?? '—'}</b></div>
+                  <div><span>Current carrier</span><b>{current.custom.carrier || '—'}</b></div>
+                  <div><span>Last call</span><b>{current.lastAttemptAt ? ago(current.lastAttemptAt) : 'First call'}</b></div>
+                </div>
+                <div className="field"><label htmlFor="call-note">Call notes</label><textarea id="call-note" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Saved to the lead with the call" /></div>
+                <div>
+                  <div className="lbl-sm" style={{ marginBottom: 6 }}>Call result → updates the stage{auto ? ' and loads the next lead' : ''}</div>
+                  <div className="result-grid">{RESULTS.map((r) => <button key={r.k} className="result-btn" style={{ ['--c' as string]: `var(${r.c})` }} disabled={finish.isPending} onClick={() => finish.mutate(r.k)}>{r.n}</button>)}</div>
+                </div>
+                <div className="row">
+                  <button className="btn ghost" onClick={() => openLead(current.id)}>Open lead page</button>
+                  {auto && <button className="btn ghost" onClick={() => setAuto(false)}><Icon name="pause" className="sm" />Pause after this call</button>}
+                </div>
+              </>
+            )}
+          </section>
+          <section className="panel"><div className="panel-h"><h3>Call schedule</h3></div><div className="panel-b">
+            <div className="kv"><div><span>Day 1 attempts</span><b className="num">{st?.attemptsDay1 ?? '—'}</b></div><div><span>Then per day</span><b className="num">{st?.attemptsPerDay ?? '—'}</b></div><div><span>Max attempts before Recycled</span><b className="num">{st?.maxAttempts ?? '—'}</b></div><div><span>Retry gap</span><b className="num">{st ? `${st.retryHours}h` : '—'}</b></div></div>
+            <p className="help" style={{ marginTop: 10 }}>Unreached numbers go back in the queue next shift. New leads jump to the front of the queue.</p>
+          </div></section>
+        </div>
+        <section className="panel">
+          <div className="panel-h"><h2>Queue</h2><small className="muted">{items.length} leads</small></div>
+          {BUCKETS.map(([k, n]) => {
+            const list = items.filter((x) => x.bucket === k);
+            return (
+              <div key={k}>
+                <div className="q-bucket"><span>{n}</span><span>{list.length}</span></div>
+                {list.slice(0, 8).map((x) => (
+                  <div key={x.lead.id} className={`q-item ${items[0] === x ? 'next' : ''}`}>
+                    <div className="grow" style={{ cursor: 'pointer' }} onClick={() => openLead(x.lead.id)}><b>{fullName(x.lead)}</b><small>{LABEL[x.bucket]}{x.bucket === 'callback' && x.lead.followUpAt ? ` ${ftime(x.lead.followUpAt)}` : ''} · {x.lead.line}</small></div>
+                    {items[0] === x && <span className="tag">Next</span>}
+                    <button className="icon-btn call sm" disabled={!!current} onClick={() => begin.mutate(x.lead)} aria-label={`Call ${fullName(x.lead)}`}><Icon name="phone" className="sm" /></button>
+                  </div>
+                ))}
+                {list.length > 8 && <div className="q-item"><small className="muted">+{list.length - 8} more</small></div>}
+              </div>
+            );
+          })}
+        </section>
+      </div>
+      {speed && <SpeedDial onClose={() => setSpeed(false)} onCall={(l) => { setSpeed(false); if (!current) begin.mutate(l); }} />}
+      {won && <WonModal lead={won} onClose={() => setWon(null)} />}
+    </>
+  );
+}

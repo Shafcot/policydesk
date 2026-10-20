@@ -6,7 +6,7 @@
 import { sql } from 'drizzle-orm';
 import { db, pool } from './client.js';
 import {
-  agencies, appointments, calls, customers, leads, leadSources, messages, notes, notifications, policies, sales, users,
+  agencies, appointments, templates, favorites, calls, customers, leads, leadSources, messages, notes, notifications, policies, sales, users,
 } from './schema.js';
 import { CARRIERS, COMMERCIAL_LINES, DEFAULT_SETTINGS, NOT_REACHED, PERSONAL_LINES, lineType, type CallResult, type Stage } from '../domain.js';
 import { hashPassword } from '../lib/auth.js';
@@ -39,7 +39,7 @@ const SUMMARY: Record<CallResult, (f: string, line: string) => string> = {
 };
 
 async function main() {
-  await db.execute(sql`truncate agencies, users, lead_sources, leads, calls, notes, messages, appointments, customers, policies, sales, notifications cascade`);
+  await db.execute(sql`truncate agencies, users, templates, favorites, lead_sources, leads, calls, notes, messages, appointments, customers, policies, sales, notifications cascade`);
   const pw = await hashPassword(process.env.SEED_PASSWORD ?? 'Policydesk123!');
 
   const [agency] = await db.insert(agencies).values({
@@ -49,14 +49,23 @@ async function main() {
 
   const [admin] = await db.insert(users).values({ agencyId: agency.id, name: 'Rafay', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw }).returning();
   const agentDefs = [
-    { name: 'Maya Torres', email: 'maya@policydesk.test', lines: ['Auto', 'Home', 'Renters', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 42000, maxCallsPerDay: 120 },
-    { name: 'Daniel Brooks', email: 'daniel@policydesk.test', lines: ['Commercial Auto', 'General Liability', 'Workers Comp', 'BOP'], status: 'available' as const, monthlyTarget: 65000, maxCallsPerDay: 100 },
-    { name: 'Priya Shah', email: 'priya@policydesk.test', lines: ['Auto', 'Home', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 40000, maxCallsPerDay: 120 },
-    { name: 'Marcus Lee', email: 'marcus@policydesk.test', lines: ['Auto', 'Commercial Auto', 'BOP', 'General Liability'], status: 'available' as const, monthlyTarget: 48000, maxCallsPerDay: 110 },
-    { name: 'Elena Ruiz', email: 'elena@policydesk.test', lines: ['Home', 'Renters', 'Auto'], status: 'offline' as const, monthlyTarget: 30000, maxCallsPerDay: 90 },
+    { name: 'Maya Torres', email: 'maya@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Home', 'Renters', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 42000, maxCallsPerDay: 120 },
+    { name: 'Daniel Brooks', email: 'daniel@policydesk.test', hoursStart: '08:30', hoursEnd: '17:30', daysOff: ['Sat', 'Sun'], lines: ['Commercial Auto', 'General Liability', 'Workers Comp', 'BOP'], status: 'available' as const, monthlyTarget: 65000, maxCallsPerDay: 100 },
+    { name: 'Priya Shah', email: 'priya@policydesk.test', hoursStart: '09:00', hoursEnd: '18:00', daysOff: ['Sun', 'Mon'], lines: ['Auto', 'Home', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 40000, maxCallsPerDay: 120 },
+    { name: 'Marcus Lee', email: 'marcus@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Commercial Auto', 'BOP', 'General Liability'], status: 'available' as const, monthlyTarget: 48000, maxCallsPerDay: 110 },
+    { name: 'Elena Ruiz', email: 'elena@policydesk.test', hoursStart: '10:00', hoursEnd: '19:00', daysOff: ['Fri', 'Sat'], lines: ['Home', 'Renters', 'Auto'], status: 'offline' as const, monthlyTarget: 30000, maxCallsPerDay: 90 },
   ];
   const agents = await db.insert(users).values(agentDefs.map((a) => ({ ...a, agencyId: agency.id, role: 'agent' as const, passwordHash: pw, minCallsPerDay: 50 }))).returning();
   const maya = agents[0];
+
+  await db.insert(templates).values([
+    { agencyId: agency.id, channel: 'sms', name: 'Welcome', body: 'Hi {first}, thanks for requesting a quote with {agency}! {agent} will call you shortly. Reply STOP to opt out.' },
+    { agencyId: agency.id, channel: 'sms', name: 'Missed you', body: 'Hi {first}, {agent} here from {agency}. Sorry I missed you! When is a good time to talk about your {line} quote?' },
+    { agencyId: agency.id, channel: 'sms', name: 'Booking link', body: 'Hi {first}, pick a time that works for you here: {booking}' },
+    { agencyId: agency.id, channel: 'sms', name: 'Quote ready', body: 'Good news {first}! Your {line} quote is ready. Can I give you a quick call?' },
+    { agencyId: agency.id, channel: 'email', name: 'Quote follow-up', subject: 'Your {line} quote', body: 'Hi {first},\n\nFollowing up on the {line} quote I sent. Happy to answer questions or adjust coverage.\n\n{agent}\n{agency}' },
+    { agencyId: agency.id, channel: 'email', name: 'Renewal review', subject: 'Time for your annual policy review', body: 'Hi {first},\n\nYour policy renews soon. Let\'s spend 15 minutes making sure your coverage still fits: {booking}\n\n{agent}' },
+  ]);
 
   const sourceDefs = [['Facebook Ads', 18, false], ['Google Ads', 32, false], ['EverQuote', 24, true], ['MediaAlpha', 21, true], ['Website Form', 0, false], ['Referral', 0, false], ['Instagram', 12, false]] as const;
   await db.insert(leadSources).values(sourceDefs.map(([name, costPerLead, isVendor]) => ({ agencyId: agency.id, name, costPerLead, isVendor })));
@@ -134,6 +143,9 @@ async function main() {
       await db.insert(appointments).values({ leadId: l.id, userId: a.id, startsAt: t, durationMin: 30, type: ['Quote review', 'Call-back', 'Policy review'][i], status: t < new Date() ? 'done' : 'scheduled' });
     }
   }
+
+  const mayaLeads = await db.query.leads.findMany({ where: (l, { eq }) => eq(l.agentId, maya.id), limit: 3 });
+  if (mayaLeads.length) await db.insert(favorites).values(mayaLeads.map((l) => ({ userId: maya.id, leadId: l.id })));
 
   // Imported book of business (older customers) → renewals in the next 90 days + six months of production.
   for (let i = 0; i < 30; i++) {

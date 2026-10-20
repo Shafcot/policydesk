@@ -10,7 +10,7 @@ export function ComingSoon() {
     <div className="soon">
       <div className="ring"><Icon name={item?.icon ?? 'clock'} className="lg" /></div>
       <h1>{item?.label ?? 'This screen'}</h1>
-      <p className="muted">This screen is part of Milestone 1 and is being built next. The design is in the approved HTML prototype.</p>
+      <p className="muted">The builder screen is next in Milestone 1; it runs on the automation engine from Milestone 2. The design is in the approved HTML prototype.</p>
     </div>
   );
 }

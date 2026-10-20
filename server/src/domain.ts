@@ -64,6 +64,8 @@ export type AgencySettings = {
   timezone: string;
   reviewLinks: { google: string; facebook: string; yelp: string };
   optOutKeywords: string[];
+  customFields: { key: string; label: string; type: 'text' | 'number' | 'date' }[];
+  reminderMinutes: number;
 };
 
 export const DEFAULT_SETTINGS: AgencySettings = {
@@ -85,6 +87,12 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   timezone: 'America/Chicago',
   reviewLinks: { google: '', facebook: '', yelp: '' },
   optOutKeywords: ['STOP', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'],
+  customFields: [
+    { key: 'dob', label: 'Date of birth', type: 'date' },
+    { key: 'zip', label: 'ZIP code', type: 'text' },
+    { key: 'carrier', label: 'Current carrier', type: 'text' },
+  ],
+  reminderMinutes: 10,
 };
 
 export const CARRIERS = ['Progressive', 'Travelers', 'Safeco', 'Nationwide', 'The Hartford', 'Liberty Mutual', 'Hiscox'] as const;

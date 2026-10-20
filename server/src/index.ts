@@ -10,6 +10,9 @@ import { dashboardRouter } from './routes/dashboard.js';
 import { leadsRouter } from './routes/leads.js';
 import { metaRouter, notificationsRouter, wonRouter } from './routes/misc.js';
 import { usersRouter } from './routes/users.js';
+import { workRouter } from './routes/work.js';
+import { bookRouter } from './routes/book.js';
+import { adminRouter } from './routes/admin.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -24,12 +27,15 @@ app.get('/api/health', async (_req, res) => {
 app.use('/api/auth', authRouter);
 // Everything below requires a signed-in user; permissions are checked per route on the server.
 app.use('/api', requireAuth);
+app.use('/api', workRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/leads', leadsRouter);
 app.use('/api/leads', wonRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/meta', metaRouter);
+app.use('/api', bookRouter);
+app.use('/api/admin', adminRouter);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'not_found' }));
 app.use(errorHandler);
 

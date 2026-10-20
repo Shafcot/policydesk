@@ -9,7 +9,9 @@ import { useToast } from '../lib/toast';
 import { Icon } from './Icon';
 import { Avatar, colorFor } from './ui';
 import { LeadDrawer } from './LeadDrawer';
+import { useTeam } from '../lib/hooks';
 import { NewLeadModal } from './NewLeadModal';
+import { SpeedDial } from './SpeedDial';
 
 type NavItem = { to: string; label: string; icon: string; admin?: boolean; ready?: boolean };
 const NAV: [string, NavItem[]][] = [
@@ -40,6 +42,7 @@ export const ALL_NAV = NAV.flatMap(([, items]) => items);
 
 export function Shell() {
   const { agency } = useAuth();
+  useTeam();
   const { isAdmin } = useMe();
   const [open, setOpen] = useState(false);
   const loc = useLocation();
@@ -82,6 +85,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
   const [newLead, setNewLead] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [speed, setSpeed] = useState(false);
 
   const notifs = useQuery({ queryKey: ['notifications'], queryFn: () => api<Notification[]>('/notifications'), refetchInterval: 30_000 });
   const unread = (notifs.data ?? []).filter((n) => !n.readAt).length;
@@ -97,7 +101,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
       <GlobalSearch />
       <div className="top-actions">
         <button className="btn primary" onClick={() => setNewLead(true)}><Icon name="plus" className="sm" /><span className="hide-sm">New lead</span></button>
-        <button className="icon-btn" title="Speed dial (Milestone 1, next)" aria-label="Speed dial" onClick={() => toast('Speed dial comes with the dialer screen', 'grid')}><Icon name="grid" /></button>
+        <button className="icon-btn" title="Speed dial" aria-label="Speed dial" onClick={() => setSpeed(true)}><Icon name="grid" /></button>
         <div style={{ position: 'relative' }}>
           <button className="icon-btn" onClick={() => setNotifOpen((o) => !o)} aria-label="Notifications"><Icon name="bell" />{unread > 0 && <span className="count">{unread}</span>}</button>
           {notifOpen && (
@@ -127,6 +131,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         </div>
       </div>
       {newLead && <NewLeadModal onClose={() => setNewLead(false)} />}
+      {speed && <SpeedDial onClose={() => setSpeed(false)} />}
     </header>
   );
 }

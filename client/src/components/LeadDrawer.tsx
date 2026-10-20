@@ -5,13 +5,14 @@ import { api, ApiError } from '../lib/api';
 import { useMe } from '../lib/auth';
 import { RESULTS, STAGES, STG, fullName, type CallResult, type LeadDetail, type Stage } from '../lib/domain';
 import { ago, dur, fdate, fdateY, fdt, ftime, money, toLocalInput } from '../lib/format';
-import { useTeam } from '../lib/hooks';
+import { usePublicSettings, useTeam } from '../lib/hooks';
 import { useToast } from '../lib/toast';
 import { Icon } from './Icon';
 import { Avatar, Pill, ResultPill } from './ui';
 import { WonModal } from './WonModal';
+import { Composer } from './Composer';
+import { BookModal } from '../pages/Calendar';
 
-const CUSTOM_FIELDS = [{ k: 'dob', n: 'Date of birth', t: 'date' }, { k: 'zip', n: 'ZIP code', t: 'text' }, { k: 'carrier', n: 'Current carrier', t: 'text' }];
 
 /** The lead page. Opens over any screen when the URL has ?lead=<id>, so a lead link can be shared. */
 export function LeadDrawer() {
@@ -39,6 +40,8 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
   const team = useTeam();
   const [tab, setTab] = useState<'calls' | 'sms' | 'email' | 'notes'>('calls');
   const [won, setWon] = useState(false);
+  const [book, setBook] = useState(false);
+  const settings = usePublicSettings();
   const { data: l, error, isLoading } = useQuery({ queryKey: ['lead', id], queryFn: () => api<LeadDetail>(`/leads/${id}`) });
 
   const refresh = () => { ['lead', 'leads', 'dashboard', 'queue'].forEach((k) => qc.invalidateQueries({ queryKey: [k] })); };
@@ -76,6 +79,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
           <button className="btn primary" disabled={!canCall || !!l.lockedByName} onClick={() => toast('Live calling connects in Milestone 3 (Twilio). Log the result below for now.', 'phone')}><Icon name="phone" className="sm" />Call {l.phone}</button>
           <button className="btn" onClick={() => setTab('sms')}><Icon name="msg" className="sm" />SMS</button>
           <button className="btn" onClick={() => setTab('email')}><Icon name="mail" className="sm" />Email</button>
+          <button className="btn" onClick={() => setBook(true)}><Icon name="calendar" className="sm" />Book</button>
           {l.stage !== 'won' && <button className="btn" onClick={() => setWon(true)}><Icon name="shield" className="sm" />Mark won</button>}
         </div>
       </div>
@@ -115,9 +119,9 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
         </div></div></section>
 
         <section className="panel"><div className="panel-h"><h3>Custom fields</h3></div><div className="panel-b"><div className="kv">
-          {CUSTOM_FIELDS.map((cf) => (
-            <div key={cf.k}><span>{cf.n}</span>
-              <input className="input" type={cf.t} defaultValue={l.custom[cf.k] ?? ''} onBlur={(e) => { if (e.target.value !== (l.custom[cf.k] ?? '')) patch.mutate({ custom: { [cf.k]: e.target.value } }); }} /></div>
+          {(settings.data?.customFields ?? []).map((cf) => (
+            <div key={cf.key}><span>{cf.label}</span>
+              <input className="input" type={cf.type} defaultValue={l.custom[cf.key] ?? ''} onBlur={(e) => { if (e.target.value !== (l.custom[cf.key] ?? '')) patch.mutate({ custom: { [cf.key]: e.target.value } }); }} /></div>
           ))}
         </div></div></section>
 
@@ -164,12 +168,12 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
                 <div className="thread">
                   {(tab === 'sms' ? sms : emails).map((m) => (
                     <div key={m.id} className={`bubble ${m.direction} ${tab === 'email' ? 'email' : ''}`}>
-                      {m.subject && <span className="subj">{m.subject}</span>}{m.body}<small>{fdt(m.createdAt)}{m.automated ? ' · automation' : ''}</small>
+                      {m.subject && <span className="subj">{m.subject}</span>}{m.body}<small>{fdt(m.createdAt)}{m.automated ? ' · automation' : ''}{m.status === 'queued' ? ' · queued' : ''}</small>
                     </div>
                   ))}
                   {!(tab === 'sms' ? sms : emails).length && <p className="muted">No messages yet.</p>}
                 </div>
-                <p className="help" style={{ marginTop: 10 }}>Sending {tab === 'sms' ? 'texts' : 'emails'} turns on in Milestone 3 (Twilio / SendGrid).</p>
+                <div style={{ marginTop: 12 }}><Composer lead={l} channel={tab} /></div>
               </>
             )}
             {tab === 'notes' && <Notes lead={l} />}
@@ -177,6 +181,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
         </section>
       </div>
       {won && <WonModal lead={l} onClose={() => setWon(false)} />}
+      {book && <BookModal leadId={l.id} onClose={() => setBook(false)} />}
     </>
   );
 }
