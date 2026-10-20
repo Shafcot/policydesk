@@ -3,7 +3,7 @@ import { api } from './api';
 import type { User } from './domain';
 import { registerTeamColors } from '../components/ui';
 
-export type Lookups = { sources: { id: string; name: string; costPerLead: number; isVendor: boolean }[]; carriers: string[]; lines: string[] };
+export type Lookups = { sources: { id: string; name: string; costPerLead: number; isVendor: boolean; webhookKey: string | null }[]; carriers: string[]; lines: string[] };
 export const useLookups = () => useQuery({ queryKey: ['lookups'], queryFn: () => api<Lookups>('/meta/lookups'), staleTime: 5 * 60_000 });
 export const useTeam = () => useQuery({
   queryKey: ['users'],

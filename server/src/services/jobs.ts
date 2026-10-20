@@ -9,6 +9,7 @@ import { fill, queueMessage, varsFor, contactFor } from './messaging.js';
 import { getSettings, notify, runAutoMoves } from './rules.js';
 import { sendBroadcast } from './campaigns.js';
 import { backupDatabase } from './backup.js';
+import { deliverQueued } from '../integrations/delivery.js';
 
 const LOCK_KEY = 4207061; // only one worker process does the work at a time
 
@@ -82,6 +83,7 @@ export async function tick() {
   if (!rows[0]?.ok) return;
   try {
     await processDueRuns();
+    await deliverQueued();
     await reminders();
     const due = await db.query.campaigns.findMany({ where: and(eq(campaigns.kind, 'broadcast'), isNull(campaigns.sentAt), lte(campaigns.scheduledFor, new Date())) });
     for (const c of due) {

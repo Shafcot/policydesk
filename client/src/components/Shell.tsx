@@ -11,6 +11,8 @@ import { Avatar, colorFor } from './ui';
 import { LeadDrawer } from './LeadDrawer';
 import { useTeam } from '../lib/hooks';
 import { useLiveUpdates } from '../lib/live';
+import { VoiceProvider, useVoice } from '../lib/voice';
+import { enablePush, pushAvailable } from '../lib/push';
 import { NewLeadModal } from './NewLeadModal';
 import { SpeedDial } from './SpeedDial';
 
@@ -50,6 +52,7 @@ export function Shell() {
   useEffect(() => setOpen(false), [loc.pathname]);
   const brand = agency?.brandName ?? 'Policy-desk CRM';
   return (
+    <VoiceProvider>
     <div id="app">
       <aside id="side" className={open ? 'open' : ''} aria-label="Main navigation">
         <div className="brand"><div className="brand-mark">{brand[0]}</div><div><b>{brand}</b><small>{agency?.name}</small></div></div>
@@ -74,6 +77,21 @@ export function Shell() {
         <main id="view"><Outlet /></main>
       </div>
       <LeadDrawer />
+      <IncomingCall />
+    </div>
+    </VoiceProvider>
+  );
+}
+
+/** Banner for an inbound call ringing in the browser (Twilio). */
+function IncomingCall() {
+  const v = useVoice();
+  if (!v.incoming) return null;
+  return (
+    <div className="reminder" role="alertdialog" aria-label="Incoming call">
+      <span className="eyebrow" style={{ color: 'var(--accent)' }}><Icon name="phone" className="sm" /> Incoming call</span>
+      <h3>{v.incoming.from}</h3>
+      <div className="row"><button className="btn primary" onClick={v.answer}><Icon name="phone" className="sm" />Answer</button><button className="btn danger" onClick={v.decline}>Decline</button></div>
     </div>
   );
 }
@@ -128,6 +146,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
             <Popover onClose={() => setMenuOpen(false)}>
               <div className="li" style={{ padding: '12px 14px' }}><div className="grow"><b>{me.name}</b><small>{me.email}</small></div></div>
               <label className="li check" style={{ padding: '10px 14px' }}><input type="checkbox" checked={me.notifyByEmail} onChange={(e) => prefs.mutate(e.target.checked)} />Email me notifications</label>
+              {pushAvailable() && <div className="li click" style={{ padding: '10px 14px' }} onClick={async () => { const r = await enablePush().catch(() => 'unavailable' as const); const msg: Record<typeof r, string> = { enabled: 'Push notifications are on for this browser', denied: 'Notifications are blocked in this browser’s settings', unavailable: 'Push notifications are not available' }; toast(msg[r], 'bell'); }}><Icon name="bell" className="sm" /><div className="grow"><b>Turn on push notifications</b></div></div>}
               <div className="li click" style={{ padding: '10px 14px' }} onClick={logout}><Icon name="left" className="sm" /><div className="grow"><b>Sign out</b></div></div>
             </Popover>
           )}

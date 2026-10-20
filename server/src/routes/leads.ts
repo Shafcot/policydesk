@@ -10,6 +10,7 @@ import { assertCanCall, getVisibleLead, leadScope } from '../services/scope.js';
 import { getSettings, notify, pickAgent, recordCall, setStage } from '../services/rules.js';
 import { fire, stopRuns } from '../services/automation.js';
 import { emitLead } from '../services/realtime.js';
+import { attachRecording } from '../integrations/delivery.js';
 
 export const leadsRouter = Router();
 
@@ -161,8 +162,9 @@ leadsRouter.post('/bulk', requireAdmin, ah<AuthedRequest>(async (req, res) => {
 leadsRouter.post('/:id/calls', ah<AuthedRequest>(async (req, res) => {
   const lead = await getVisibleLead(req.user, String(req.params.id));
   assertCanCall(req.user, lead);
-  const body = z.object({ result: z.enum(CALL_RESULTS), durationSec: z.number().int().min(0).max(36000).optional(), notes: z.string().max(5000).optional() }).parse(req.body);
+  const body = z.object({ result: z.enum(CALL_RESULTS), durationSec: z.number().int().min(0).max(36000).optional(), notes: z.string().max(5000).optional(), callSid: z.string().regex(/^CA[0-9a-f]{32}$/).optional() }).parse(req.body);
   const updated = await recordCall(lead, req.user, body);
+  if (body.callSid) await attachRecording(body.callSid); // the recording may have arrived first
   res.status(201).json(updated);
 }));
 

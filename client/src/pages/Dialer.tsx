@@ -11,6 +11,8 @@ import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
 import { Avatar, Bar, PageHead, StagePill } from '../components/ui';
 import { SpeedDial } from '../components/SpeedDial';
+import { useVoice } from '../lib/voice';
+import type { Call } from '@twilio/voice-sdk';
 import { WonModal } from '../components/WonModal';
 
 type QueueItem = { bucket: 'new' | 'callback' | 'followup' | 'retry'; lead: Lead };
@@ -37,6 +39,10 @@ export function Dialer() {
   const [speed, setSpeed] = useState(false);
   const [won, setWon] = useState<Lead | null>(null);
   const autoRef = useRef(auto); autoRef.current = auto;
+  const voice = useVoice();
+  const callRef = useRef<Call | null>(null);
+  const [callState, setCallState] = useState<'ringing' | 'connected' | 'ended' | null>(null);
+  const [muted, setMuted] = useState(false);
 
   useEffect(() => { if (!startedAt) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [startedAt]);
 
@@ -45,15 +51,33 @@ export function Dialer() {
 
   const begin = useMutation({
     mutationFn: (l: Lead) => api(`/leads/${l.id}/lock`, { method: 'POST' }).then(() => l),
-    onSuccess: (l) => { setCurrent(l); setStartedAt(Date.now()); setNow(Date.now()); setNote(''); },
+    onSuccess: async (l) => {
+      setCurrent(l); setNote(''); setMuted(false);
+      if (!voice.ready) { setStartedAt(Date.now()); setNow(Date.now()); setCallState(null); return; }
+      // Live call through Twilio: the timer starts when the lead answers.
+      setStartedAt(null); setCallState('ringing');
+      try {
+        const call = await voice.connect(l.id);
+        callRef.current = call;
+        call.on('accept', () => { setCallState('connected'); setStartedAt(Date.now()); setNow(Date.now()); });
+        const end = () => setCallState('ended');
+        call.on('disconnect', end); call.on('cancel', end); call.on('reject', end);
+        call.on('error', (e: { message?: string }) => { end(); toast(`Call error: ${e.message ?? 'unknown'}`, 'alert'); });
+      } catch (e) { setCallState('ended'); onErr(e); }
+    },
     onError: onErr,
   });
+  const hangUp = () => { callRef.current?.disconnect(); setCallState('ended'); };
   const finish = useMutation({
-    mutationFn: (result: CallResult) => api<Lead & { stage: Stage }>(`/leads/${current!.id}/calls`, { method: 'POST', json: { result, durationSec: startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0, notes: note.trim() || undefined } }),
+    mutationFn: (result: CallResult) => {
+      const callSid = callRef.current?.parameters?.CallSid;
+      if (callRef.current && callState !== 'ended') callRef.current.disconnect();
+      return api<Lead & { stage: Stage }>(`/leads/${current!.id}/calls`, { method: 'POST', json: { result, durationSec: startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0, notes: note.trim() || undefined, ...(callSid ? { callSid } : {}) } });
+    },
     onSuccess: (l, result) => {
       ['queue', 'dashboard', 'leads', 'lead'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
       if (result === 'sold') { setWon(l); setAuto(false); } else toast(`${fullName(l)} → ${STG[l.stage].n}`);
-      setCurrent(null); setStartedAt(null);
+      setCurrent(null); setStartedAt(null); setCallState(null); callRef.current = null;
     },
     onError: onErr,
   });
@@ -103,10 +127,16 @@ export function Dialer() {
                   <StagePill stage={current.stage} />
                 </div>
                 <div className="row between">
-                  <div className="call-state connected"><span className="pulse" />Dial <span className="mono" style={{ fontSize: 20 }}>{current.phone}</span></div>
-                  <span className="call-timer">{dur(startedAt ? (now - startedAt) / 1000 : 0)}</span>
+                  {callState
+                    ? <div className={`call-state ${callState === 'connected' ? 'connected' : ''}`}><span className="pulse" />{{ ringing: 'Ringing…', connected: 'Connected', ended: 'Call ended — pick a result' }[callState]} <span className="mono muted">{current.phone}</span></div>
+                    : <div className="call-state connected"><span className="pulse" />Dial <span className="mono" style={{ fontSize: 20 }}>{current.phone}</span></div>}
+                  <div className="row">{callState === 'connected' && <span className="rec">RECORDING</span>}<span className="call-timer">{dur(startedAt ? (now - startedAt) / 1000 : 0)}</span></div>
                 </div>
-                <p className="help">Live calling and recording connect in Milestone 3 (Twilio). For now, dial from your phone and log the result here.</p>
+                {callState && callState !== 'ended' && <div className="row">
+                  <button className="btn danger" onClick={hangUp}><Icon name="hang" className="sm" />Hang up</button>
+                  <button className="btn" onClick={() => { callRef.current?.mute(!muted); setMuted(!muted); }}>{muted ? 'Unmute' : 'Mute'}</button>
+                </div>}
+                {!callState && <p className="help">Browser calling turns on when Twilio is connected. Until then, dial from your phone and log the result here.</p>}
                 <div className="kv">
                   <div><span>Source</span><b>{current.source}</b></div>
                   <div><span>Attempt</span><b className="num">{current.attempts + 1} of {st?.maxAttempts ?? '—'}</b></div>

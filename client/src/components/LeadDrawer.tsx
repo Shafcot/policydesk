@@ -151,7 +151,9 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
                 {l.calls.map((c) => (
                   <div className="call-item" key={c.id}>
                     <div className="row between"><div className="row"><ResultPill result={c.result} /><small className="muted">{fdt(c.startedAt)} · {dur(c.durationSec)} · {c.userName ?? 'Unknown'}</small></div></div>
-                    {c.recordingUrl ? <audio controls src={c.recordingUrl} style={{ width: '100%' }} /> : <small className="faint">Recording appears here once calling is connected (Milestone 3).</small>}
+                    {c.recordingUrl ? <Recording callId={c.id} /> : <small className="faint">No recording (browser calling records automatically once Twilio is connected).</small>}
+                    {c.transcriptStatus === 'pending' && <small className="muted">Transcribing…</small>}
+                    {c.transcript && c.transcript.length > 0 && <details className="transcript"><summary>Transcript</summary><div className="transcript-lines">{c.transcript.map((t, i) => <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{t.text}</p>)}</div></details>}
                     {c.summary && <div className="summary"><b><Icon name="bot" className="sm" /> Summary</b><p>{c.summary}</p></div>}
                     {c.notes && <p><small className="muted">Notes:</small> {c.notes}</p>}
                   </div>
@@ -219,4 +221,12 @@ function LeadAutomations({ leadId, onRemove }: { leadId: string; onRemove: () =>
       </div></div>
     </section>
   );
+}
+
+/** Loads a short-lived signed link, then plays the call recording. */
+function Recording({ callId }: { callId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState(false);
+  if (!url) return <button className="btn sm" onClick={() => api<{ url: string }>(`/calls/${callId}/recording-url`).then((r) => setUrl(r.url)).catch(() => setErr(true))}><Icon name="play" className="sm fill" />{err ? 'Recording unavailable — retry' : 'Play recording'}</button>;
+  return <audio controls autoPlay src={url} style={{ width: '100%' }} onError={() => { setUrl(null); setErr(true); }} />;
 }
