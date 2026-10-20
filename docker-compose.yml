@@ -1,0 +1,15 @@
+# Local development services. Production hosting is not decided yet; this file is only for running on your machine.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: policydesk
+      POSTGRES_PASSWORD: policydesk
+      POSTGRES_DB: policydesk
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+volumes:
+  pgdata:
