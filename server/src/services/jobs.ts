@@ -8,6 +8,7 @@ import { isBusinessTime, localParts } from './hours.js';
 import { fill, queueMessage, varsFor, contactFor } from './messaging.js';
 import { getSettings, notify, runAutoMoves } from './rules.js';
 import { sendBroadcast } from './campaigns.js';
+import { backupDatabase } from './backup.js';
 
 const LOCK_KEY = 4207061; // only one worker process does the work at a time
 
@@ -27,8 +28,19 @@ async function renewals(agencyId: string) {
     const to = new Date(from); to.setDate(to.getDate() + 1);
     const due = await db.select({ p: policies, c: customers }).from(policies).innerJoin(customers, eq(policies.customerId, customers.id))
       .where(and(eq(customers.agencyId, agencyId), eq(policies.status, 'active'), sql`${policies.renewalDate} >= ${from}`, sql`${policies.renewalDate} < ${to}`));
-    for (const { p, c } of due) await fire(db, 'renewal_date', { agencyId, customerId: c.id, leadId: c.leadId, policyId: p.id, daysBefore: n });
+    for (const { p, c } of due) {
+      await fire(db, 'renewal_date', { agencyId, customerId: c.id, leadId: c.leadId, policyId: p.id, daysBefore: n });
+      await notify(db, { agencyId, userId: p.agentId, kind: 'renew', text: `Upcoming renewal in ${n} days: ${c.name} · ${p.line} (${p.carrier})`, leadId: c.leadId });
+    }
   }
+}
+
+/** "Follow-ups due today" notification for each agent (SOW 5). */
+async function followupsDue(agencyId: string) {
+  const end = new Date(); end.setHours(23, 59, 59, 999);
+  const rows = await db.select({ agentId: leads.agentId, n: sql<number>`count(*)::int` }).from(leads)
+    .where(and(eq(leads.agencyId, agencyId), sql`${leads.followUpAt} <= ${end}`, sql`${leads.stage} not in ('won','lost','recycled')`, sql`${leads.agentId} is not null`)).groupBy(leads.agentId);
+  for (const r of rows) if (r.n > 0) await notify(db, { agencyId, userId: r.agentId, kind: 'followups', text: `You have ${r.n} follow-up${r.n === 1 ? '' : 's'} due today` });
 }
 
 /** Birthday trigger + the birthday campaign message (SOW 4). */
@@ -84,7 +96,11 @@ export async function tick() {
       await once('renewals', a.id, p.date, () => renewals(a.id));
       await once('birthdays', a.id, p.date, () => birthdays(a.id, p.md));
       await once('holidays', a.id, p.date, () => holidays(a.id, p.md));
+      await once('followups', a.id, p.date, () => followupsDue(a.id));
     }
+    // One database backup per day (first agency's date is fine: the backup covers everything).
+    const first = (await db.select({ id: agencies.id }).from(agencies).limit(1))[0];
+    if (first && process.env.BACKUP_DIR) await once('backup', first.id, new Date().toISOString().slice(0, 10), async () => { const r = await backupDatabase(); if (r) console.log('Backup written', r.file); });
   } finally {
     await pool.query('select pg_advisory_unlock($1)', [LOCK_KEY]);
   }

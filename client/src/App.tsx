@@ -3,6 +3,7 @@ import { useAuth } from './lib/auth';
 import { Shell } from './components/Shell';
 import { Login } from './pages/Login';
 import { AcceptInvite } from './pages/AcceptInvite';
+import { BookingPage, ForgotPassword, ResetPassword } from './pages/PublicPages';
 import { Dashboard } from './pages/Dashboard';
 import { Leads } from './pages/Leads';
 import { Pipeline } from './pages/Pipeline';
@@ -18,7 +19,11 @@ import { Campaigns } from './pages/Campaigns';
 export function App() {
   const { user, loading } = useAuth();
   const { pathname } = useLocation();
+  // Pages that work without signing in.
   if (pathname === '/accept-invite') return <AcceptInvite />;
+  if (pathname === '/forgot-password') return <ForgotPassword />;
+  if (pathname === '/reset-password') return <ResetPassword />;
+  if (pathname.startsWith('/book/')) return <BookingPage slug={decodeURIComponent(pathname.slice(6))} />;
   if (loading) return <div className="empty">Loading…</div>;
   if (!user) return <Login />;
   const isAdmin = user.role === 'admin';

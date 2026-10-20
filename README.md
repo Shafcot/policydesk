@@ -58,6 +58,10 @@ Flows stop when the lead replies, books or is won/lost (per flow), and always wh
 
 To test replies before the webhooks exist, admins can call `POST /api/dev/inbound` with `{ "leadId": "...", "body": "STOP" }` (disabled in production).
 
+## Backups
+
+Set `BACKUP_DIR` (and optionally `BACKUP_KEEP`, default 14) and the worker writes one compressed `pg_dump` a day, keeping the newest files. Run one by hand with `npm run backup -w server`. Restore with `pg_restore --clean -d "$DATABASE_URL" <file>`. Copy the folder to off-server storage once hosting is decided.
+
 ## Database changes
 
 Edit `server/src/db/schema.ts`, then:
@@ -72,7 +76,7 @@ npm run db:migrate
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | 1 · Frontend | All screens, including the automation builder and campaigns | Done |
-| 2 · Backend | Automation engine, background worker (reminders, renewals, birthdays, holidays, auto-moves), campaigns, tasks, live updates (Socket.IO) | In progress |
+| 2 · Backend | Automation engine, worker, campaigns, tasks, live updates, lead import, booking pages, team emails, password reset, login rate limit, daily backups | Done |
 | 3 · Integrations & testing | Twilio, SendGrid, OpenAI, Firebase, lead sources, data migration | Not started |
 
 Hosting is not decided yet. Nothing in the code is tied to a provider; file storage goes through a local-disk driver that can be swapped for S3-compatible storage later.

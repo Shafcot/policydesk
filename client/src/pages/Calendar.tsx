@@ -96,7 +96,7 @@ function AgentSide() {
   });
   return (
     <>
-      <section className="panel"><div className="panel-h"><h3>My booking link</h3></div><div className="panel-b"><p className="help" style={{ marginBottom: 8 }}>Leads pick a free slot inside your working hours.</p><CopyLink url={bookingLink(me.name)} /></div></section>
+      <section className="panel"><div className="panel-h"><h3>My booking link</h3></div><div className="panel-b"><p className="help" style={{ marginBottom: 8 }}>Leads pick a free slot inside your working hours.</p><CopyLink url={bookingLink(me.bookingSlug)} /></div></section>
       <section className="panel"><div className="panel-h"><h3>Working hours</h3></div><div className="panel-b stack" style={{ gap: 12 }}>
         <div className="row"><input type="time" className="input" style={{ width: 'auto' }} defaultValue={me.hoursStart} onBlur={(e) => e.target.value !== me.hoursStart && save.mutate({ hoursStart: e.target.value })} aria-label="Start" /><span>to</span>
           <input type="time" className="input" style={{ width: 'auto' }} defaultValue={me.hoursEnd} onBlur={(e) => e.target.value !== me.hoursEnd && save.mutate({ hoursEnd: e.target.value })} aria-label="End" /></div>
@@ -117,7 +117,7 @@ function AdminSide() {
       <section className="panel"><div className="panel-h"><h3>Team hours</h3></div><div className="panel-b"><div className="list">{agents.map((a) => (
         <div className="li" key={a.id}><span className="dot" style={{ background: `var(${colorFor(a.id)})` }} /><div className="grow"><b>{a.name}</b><small>{a.hoursStart}–{a.hoursEnd} · off {a.daysOff.join(', ') || 'none'}</small></div></div>
       ))}</div></div></section>
-      <section className="panel"><div className="panel-h"><h3>Booking links</h3></div><div className="panel-b stack" style={{ gap: 8 }}>{agents.map((a) => <div key={a.id}><small className="muted">{a.name}</small><CopyLink url={bookingLink(a.name)} /></div>)}</div></section>
+      <section className="panel"><div className="panel-h"><h3>Booking links</h3></div><div className="panel-b stack" style={{ gap: 8 }}>{agents.map((a) => <div key={a.id}><small className="muted">{a.name}</small><CopyLink url={bookingLink(a.bookingSlug)} /></div>)}</div></section>
       <section className="panel"><div className="panel-h"><h3>No-shows</h3></div><div className="panel-b"><p className="help">Mark an appointment as a no-show and the lead gets a rebooking text while the agent and you get an alert.</p></div></section>
     </>
   );

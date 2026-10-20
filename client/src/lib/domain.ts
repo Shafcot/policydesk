@@ -25,7 +25,7 @@ export type AgentStatus = 'available' | 'oncall' | 'offline';
 export type User = {
   id: string; agencyId: string; name: string; email: string; phone: string | null; role: Role; status: AgentStatus;
   lines: string[]; hoursStart: string; hoursEnd: string; daysOff: string[]; minCallsPerDay: number; maxCallsPerDay: number;
-  monthlyTarget: number; active: boolean; createdAt: string; callsToday?: number; invited?: boolean;
+  monthlyTarget: number; active: boolean; createdAt: string; callsToday?: number; invited?: boolean; bookingSlug: string | null; notifyByEmail: boolean;
 };
 export type Agency = { id: string; name: string; brandName: string; brandColor: string | null; logoUrl: string | null };
 

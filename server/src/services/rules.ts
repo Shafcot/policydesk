@@ -4,6 +4,8 @@ import { db } from '../db/client.js';
 import { agencies, appointments, calls, leads, notes, notifications, users, type Lead, type User } from '../db/schema.js';
 import { fire, stopRuns } from './automation.js';
 import { emit } from './realtime.js';
+import { sendTeamEmail } from './mailer.js';
+import { env } from '../config.js';
 import { DEFAULT_SETTINGS, NOT_REACHED, RESULT_STAGE, STAGE_LABELS, type AgencySettings, type CallResult, type Stage } from '../domain.js';
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -18,7 +20,17 @@ export async function notify(x: Exec, n: { agencyId: string; userId?: string | n
   const [row] = await x.insert(notifications).values({ agencyId: n.agencyId, userId: n.userId ?? null, kind: n.kind, text: n.text, leadId: n.leadId ?? null }).returning();
   // Live push (bell + toast). Email copies of notifications are sent once SendGrid is connected.
   emit(n.agencyId, n.userId ?? null, 'notification', row);
+  if (EMAIL_KINDS.has(n.kind)) {
+    const to = n.userId
+      ? await x.query.users.findMany({ where: and(eq(users.id, n.userId), eq(users.notifyByEmail, true), eq(users.active, true)) })
+      : await x.query.users.findMany({ where: and(eq(users.agencyId, n.agencyId), eq(users.role, 'admin'), eq(users.notifyByEmail, true), eq(users.active, true)) });
+    const link = n.leadId ? `${env.CLIENT_ORIGIN}/?lead=${n.leadId}` : env.CLIENT_ORIGIN;
+    for (const u of to) await sendTeamEmail(x, { agencyId: n.agencyId, to: u.email, subject: n.text.slice(0, 200), body: `${n.text}\n\nOpen in Policy-desk CRM: ${link}\n\nYou can turn off email notifications from your account menu.` });
+  }
 }
+
+/** Notification kinds that also go out by email (SOW 5). */
+const EMAIL_KINDS = new Set(['lead', 'call', 'bad', 'reply', 'book', 'renew', 'task', 'requote', 'followups']);
 
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 

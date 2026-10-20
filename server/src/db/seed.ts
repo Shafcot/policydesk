@@ -40,7 +40,7 @@ const SUMMARY: Record<CallResult, (f: string, line: string) => string> = {
 };
 
 async function main() {
-  await db.execute(sql`truncate agencies, users, templates, favorites, automations, automation_runs, tasks, campaigns, job_runs, lead_sources, leads, calls, notes, messages, appointments, customers, policies, sales, notifications cascade`);
+  await db.execute(sql`truncate team_emails, agencies, users, templates, favorites, automations, automation_runs, tasks, campaigns, job_runs, lead_sources, leads, calls, notes, messages, appointments, customers, policies, sales, notifications cascade`);
   const pw = await hashPassword(process.env.SEED_PASSWORD ?? 'Policydesk123!');
 
   const [agency] = await db.insert(agencies).values({
@@ -48,7 +48,7 @@ async function main() {
     settings: { ...DEFAULT_SETTINGS, reviewLinks: { google: 'https://g.page/r/demo/review', facebook: 'https://facebook.com/demo/reviews', yelp: 'https://yelp.com/biz/demo' } },
   }).returning();
 
-  const [admin] = await db.insert(users).values({ agencyId: agency.id, name: 'Rafay', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw }).returning();
+  const [admin] = await db.insert(users).values({ agencyId: agency.id, name: 'Rafay', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw, bookingSlug: 'rafay' }).returning();
   const agentDefs = [
     { name: 'Maya Torres', email: 'maya@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Home', 'Renters', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 42000, maxCallsPerDay: 120 },
     { name: 'Daniel Brooks', email: 'daniel@policydesk.test', hoursStart: '08:30', hoursEnd: '17:30', daysOff: ['Sat', 'Sun'], lines: ['Commercial Auto', 'General Liability', 'Workers Comp', 'BOP'], status: 'available' as const, monthlyTarget: 65000, maxCallsPerDay: 100 },
@@ -56,7 +56,7 @@ async function main() {
     { name: 'Marcus Lee', email: 'marcus@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Commercial Auto', 'BOP', 'General Liability'], status: 'available' as const, monthlyTarget: 48000, maxCallsPerDay: 110 },
     { name: 'Elena Ruiz', email: 'elena@policydesk.test', hoursStart: '10:00', hoursEnd: '19:00', daysOff: ['Fri', 'Sat'], lines: ['Home', 'Renters', 'Auto'], status: 'offline' as const, monthlyTarget: 30000, maxCallsPerDay: 90 },
   ];
-  const agents = await db.insert(users).values(agentDefs.map((a) => ({ ...a, agencyId: agency.id, role: 'agent' as const, passwordHash: pw, minCallsPerDay: 50 }))).returning();
+  const agents = await db.insert(users).values(agentDefs.map((a) => ({ ...a, agencyId: agency.id, role: 'agent' as const, passwordHash: pw, minCallsPerDay: 50, bookingSlug: a.name.split(' ')[0].toLowerCase() }))).returning();
   const maya = agents[0];
 
   await db.insert(templates).values([

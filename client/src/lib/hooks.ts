@@ -21,4 +21,5 @@ export const useTemplates = () => useQuery({ queryKey: ['templates'], queryFn: (
 export const fillTemplate = (text: string, v: { first: string; agent: string; agency: string; line: string; booking: string }) =>
   text.replace(/\{first\}/g, v.first).replace(/\{agent\}/g, v.agent).replace(/\{agency\}/g, v.agency).replace(/\{line\}/g, v.line.toLowerCase()).replace(/\{booking\}/g, v.booking);
 
-export const bookingLink = (agentName: string | null | undefined) => `${location.origin}/book/${(agentName ?? 'team').toLowerCase().split(' ')[0]}`;
+/** Public booking page for an agent (their unique slug). */
+export const bookingLink = (slug: string | null | undefined) => (slug ? `${location.origin}/book/${slug}` : '');

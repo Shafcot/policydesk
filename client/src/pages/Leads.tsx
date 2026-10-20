@@ -10,6 +10,7 @@ import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
 import { Avatar, colorFor, Empty, Loading, PageHead, Pill, StagePill } from '../components/ui';
 import { NewLeadModal } from '../components/NewLeadModal';
+import { ImportLeads } from '../components/ImportLeads';
 
 type Filters = { q: string; stage: string; source: string; agent: string; line: string; type: string; days: string };
 const EMPTY: Filters = { q: '', stage: '', source: '', agent: '', line: '', type: '', days: '' };
@@ -31,6 +32,7 @@ export function Leads() {
   const [f, setF] = useState<Filters>(EMPTY);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [newLead, setNewLead] = useState(false);
+  const [importing, setImporting] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
   const lookups = useLookups();
@@ -60,7 +62,7 @@ export function Leads() {
   return (
     <>
       <PageHead title={isAdmin ? 'Leads' : 'My leads'} sub={isAdmin ? 'Every lead in the agency. New leads land in intake, tagged by source, then auto-assign.' : 'Only leads assigned to you.'}
-        actions={<><button className="btn" onClick={() => exportCsv(rows, names)}><Icon name="download" className="sm" />Export</button><button className="btn primary" onClick={() => setNewLead(true)}><Icon name="plus" className="sm" />New lead</button></>} />
+        actions={<>{isAdmin && <button className="btn" onClick={() => setImporting(true)}><Icon name="upload" className="sm" />Import</button>}<button className="btn" onClick={() => exportCsv(rows, names)}><Icon name="download" className="sm" />Export</button><button className="btn primary" onClick={() => setNewLead(true)}><Icon name="plus" className="sm" />New lead</button></>} />
       <div className="tabs" style={{ marginBottom: 14 }}>
         <button className={tab === 'all' ? 'on' : ''} onClick={() => setTab('all')}>All leads</button>
         <button className={tab === 'intake' ? 'on' : ''} onClick={() => setTab('intake')}>Lead intake {isAdmin && <span className="badge">{(intakeCount.data ?? []).filter((l) => !l.agentId).length}</span>}</button>
@@ -117,6 +119,7 @@ export function Leads() {
       </div>
       <p className="help" style={{ marginTop: 8 }}>{rows.length} leads</p>
       {newLead && <NewLeadModal onClose={() => setNewLead(false)} />}
+      {importing && <ImportLeads onClose={() => setImporting(false)} />}
     </>
   );
 }

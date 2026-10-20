@@ -14,7 +14,7 @@ export type Recipient =
 
 export type TemplateVars = { first: string; agent: string; agency: string; line: string; booking: string; google: string; facebook: string; yelp: string };
 
-export const bookingUrl = (agentName: string | null | undefined) => `${env.CLIENT_ORIGIN}/book/${(agentName ?? 'team').toLowerCase().split(' ')[0]}`;
+export const bookingUrl = (slug: string | null | undefined) => (slug ? `${env.CLIENT_ORIGIN}/book/${slug}` : env.CLIENT_ORIGIN);
 
 export function fill(text: string, v: TemplateVars) {
   return text
@@ -45,7 +45,7 @@ export async function varsFor(x: Exec, contact: NonNullable<Awaited<ReturnType<t
   const st: AgencySettings = { ...DEFAULT_SETTINGS, ...(agency?.settings ?? {}) };
   return {
     first: contact.first, agent: agent?.name ?? agency?.name ?? '', agency: agency?.name ?? '', line: contact.line,
-    booking: bookingUrl(agent?.name), google: st.reviewLinks.google, facebook: st.reviewLinks.facebook, yelp: st.reviewLinks.yelp,
+    booking: bookingUrl(agent?.bookingSlug), google: st.reviewLinks.google, facebook: st.reviewLinks.facebook, yelp: st.reviewLinks.yelp,
   };
 }
 
