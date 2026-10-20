@@ -87,20 +87,22 @@ Hostinger's web plans run Node.js apps but don't offer PostgreSQL, so the databa
 | `JWT_SECRET` | 40+ random characters |
 | `CLIENT_ORIGIN` | `https://crm.yourdomain.com` |
 | `PUBLIC_API_URL` | `https://crm.yourdomain.com` |
-| `DEMO_DATA` | `true` for a test server (loads demo agency, users and leads into an empty database; never resets existing data) |
-| `SEED_PASSWORD` | the password for the demo accounts |
+| `SETUP_AGENCY_NAME` | the agency's name |
+| `SETUP_ADMIN_NAME` | the Super Admin's full name |
+| `SETUP_ADMIN_EMAIL` | the Super Admin's sign-in email |
+| `SETUP_ADMIN_PASSWORD` | their password (8+ characters) |
 
 Don't set `NODE_ENV`. `server.js` switches to production itself, and the build needs the dev tools npm installs by default.
 
-5. Deploy. On start the app applies migrations, loads the demo data (first start only), and serves everything on the domain. Each push to `main` redeploys.
+5. Deploy. On start the app applies migrations and serves everything on the domain. On the first start only, it also creates the agency and Super Admin from the `SETUP_*` variables. The app starts clean: no leads, customers or sample records, just the default templates, automations and lead sources. Each push to `main` redeploys.
+6. Sign in as the Super Admin, then remove `SETUP_ADMIN_PASSWORD` from the environment variables.
+7. **Agents:** go to **Users → Invite**. Until SendGrid is connected the invite isn't emailed, so copy the link from the popup and open it (or send it to the agent) to set the agent's password.
 
-**Demo sign-ins** (password = `SEED_PASSWORD`): Super Admin `admin@policydesk.test`. Agents `maya@`, `daniel@`, `priya@`, `marcus@`, `elena@policydesk.test`.
-
-**Going live on Hostinger later:** remove `DEMO_DATA` and `SEED_PASSWORD`, point `DATABASE_URL` at a fresh database, and create the real owner with `node server/dist/db/bootstrap.js` (see below). Shared hosting may suspend idle apps, which pauses scheduled automations until the next visit. For production, a Hostinger VPS (Option A) avoids that.
+Shared hosting may suspend idle apps, which pauses scheduled automations until the next visit. For production, a Hostinger VPS (Option A) avoids that.
 
 ## First sign-in
 
-The production database starts empty, and the demo seed refuses to run against production. Create the agency and first admin once:
+The production database starts empty, and the demo seed refuses to run against production. Either set the `SETUP_*` variables described in Option C (works on every host), or create the agency and first admin once from a shell:
 
 ```bash
 docker compose -f docker-compose.prod.yml exec app node dist/db/bootstrap.js "Agency Name" "Owner Name" owner@agency.com

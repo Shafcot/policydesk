@@ -45,7 +45,7 @@ export async function seedDemo() {
 
   const [agency] = await db.insert(agencies).values({
     name: 'Demo Insurance Agency', brandName: 'Policy-desk CRM',
-    settings: { ...DEFAULT_SETTINGS, reviewLinks: { google: 'https://g.page/r/demo/review', facebook: 'https://facebook.com/demo/reviews', yelp: 'https://yelp.com/biz/demo' } },
+    settings: { ...DEFAULT_SETTINGS, teamTarget: 240000, reviewLinks: { google: 'https://g.page/r/demo/review', facebook: 'https://facebook.com/demo/reviews', yelp: 'https://yelp.com/biz/demo' } },
   }).returning();
 
   const [admin] = await db.insert(users).values({ agencyId: agency.id, name: 'Rafay', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw, bookingSlug: 'rafay' }).returning();

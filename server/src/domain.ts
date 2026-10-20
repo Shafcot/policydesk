@@ -81,7 +81,7 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   requoteMonths: 5,
   autoRequote: true,
   autoRecycle: true,
-  teamTarget: 240000,
+  teamTarget: 0, // set by the admin on the Targets page
   teamTargetVisible: true,
   businessDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
   businessOpen: '08:00',
