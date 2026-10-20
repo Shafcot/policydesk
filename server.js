@@ -2,7 +2,22 @@
 // Build first with `npm run build`. Serves the API, background worker and React app on one port.
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
 process.env.CLIENT_DIST = process.env.CLIENT_DIST || require('node:path').join(__dirname, 'client', 'dist');
+
+console.log(`Policy-desk starting: node ${process.version}, PORT=${process.env.PORT ?? '(unset)'}, DATABASE_URL ${process.env.DATABASE_URL ? 'set' : 'MISSING'}, JWT_SECRET ${process.env.JWT_SECRET ? 'set' : 'MISSING'}`);
+
 import('./server/dist/start.js').catch((e) => {
+  // Don't just exit (the host would only show "503"): serve a page that says what's wrong, without secrets.
+  const msg = String((e && e.message) || e).replace(/postgres(ql)?:\/\/[^\s'"]+/gi, '[database url]').slice(0, 600);
   console.error('Policy-desk failed to start:', e);
-  process.exit(1);
+  const hints = [];
+  if (!process.env.DATABASE_URL) hints.push('DATABASE_URL is not set. Add the Neon connection string in the app\'s environment variables.');
+  if (!process.env.JWT_SECRET) hints.push('JWT_SECRET is not set. Add 40+ random characters.');
+  if (/ECONNREFUSED|ENOTFOUND|getaddrinfo/i.test(msg)) hints.push('The database could not be reached. Check DATABASE_URL (copy it again from Neon → Connect, pooling off).');
+  if (/password authentication failed/i.test(msg)) hints.push('The database password in DATABASE_URL is wrong. Copy the connection string again from Neon.');
+  if (/self[- ]signed|certificate/i.test(msg)) hints.push('SSL certificate problem. Add DATABASE_SSL=no-verify.');
+  if (/Cannot find module|ERR_MODULE_NOT_FOUND/.test(msg)) hints.push('The build output is missing. Check the build command is "npm run build" and redeploy.');
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Policy-desk: startup error</title><body style="font-family:system-ui;max-width:640px;margin:10vh auto;padding:0 16px;line-height:1.5"><h2>Policy-desk couldn't start</h2>${hints.length ? `<ul>${hints.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>` : ''}<p><b>Error:</b></p><pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:8px">${esc(msg)}</pre><p>Fix the environment variables in hPanel, then redeploy or restart the app.</p></body>`;
+  const port = process.env.PORT && /^\d+$/.test(process.env.PORT) ? Number(process.env.PORT) : (process.env.PORT || 4000);
+  require('node:http').createServer((_req, res) => { res.writeHead(503, { 'content-type': 'text/html; charset=utf-8' }); res.end(html); }).listen(port);
 });
