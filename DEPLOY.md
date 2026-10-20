@@ -9,6 +9,7 @@ The app ships as **one Docker image**: the API, the background worker and the bu
 | A Docker host | Any of: Render, Railway, Fly.io, DigitalOcean App Platform / Droplet, a VPS, AWS ECS/Lightsail, Azure Container Apps. |
 | PostgreSQL 16 | Managed (recommended: daily snapshots + point-in-time restore) or the `db` service in `docker-compose.prod.yml`. |
 | A domain | e.g. `crm.agency.com`, with HTTPS (most hosts do this automatically; on a VPS use Caddy or nginx + Let's Encrypt). |
+| PostgreSQL alternatives | On hosts without Postgres (e.g. Hostinger web plans), use Neon, Supabase (set `DATABASE_SSL=no-verify` for its pooler) or any managed Postgres. |
 | Persistent disk (optional) | Mounted at `/data`, for local uploads and the built-in nightly `pg_dump` backups. Not needed if the managed database has its own backups. |
 
 ## Environment variables
@@ -56,9 +57,52 @@ crm.agency.com {
 
 Database migrations run automatically every time the container starts.
 
+## Option C: Hostinger Business / Cloud hosting (Node.js web app)
+
+Hostinger's web plans run Node.js apps but don't offer PostgreSQL, so the database lives on [Neon](https://neon.tech) (free tier is enough for testing).
+
+**1. Database (Neon)**
+1. Create a Neon project in a US region.
+2. On the dashboard, click **Connect**, turn **Connection pooling off**, and copy the connection string (`postgresql://…neon.tech/neondb?sslmode=require…`). The background worker uses session locks, which the pooled connection doesn't support.
+
+**2. Web app (hPanel)**
+1. **Websites → Add website → Node.js Apps (Web App) → Import Git repository**. Connect GitHub and pick `Shafcot/policydesk`, branch `main`.
+2. Pick a domain or subdomain that has no website on it (e.g. `crm.yourdomain.com`).
+3. Build settings:
+
+| Field | Value |
+|---|---|
+| Framework | Other (or Express) |
+| Node.js version | 22 |
+| Build command | `npm run build` |
+| Entry file | `server.js` |
+| Output directory | leave empty |
+
+4. Environment variables:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | the Neon connection string |
+| `DATABASE_POOL_MAX` | `5` |
+| `JWT_SECRET` | 40+ random characters |
+| `CLIENT_ORIGIN` | `https://crm.yourdomain.com` |
+| `PUBLIC_API_URL` | `https://crm.yourdomain.com` |
+| `SETUP_AGENCY_NAME` | the agency's name |
+| `SETUP_ADMIN_NAME` | the Super Admin's full name |
+| `SETUP_ADMIN_EMAIL` | the Super Admin's sign-in email |
+| `SETUP_ADMIN_PASSWORD` | their password (8+ characters) |
+
+Don't set `NODE_ENV`. `server.js` switches to production itself, and the build needs the dev tools npm installs by default.
+
+5. Deploy. On start the app applies migrations and serves everything on the domain. On the first start only, it also creates the agency and Super Admin from the `SETUP_*` variables. The app starts clean: no leads, customers or sample records, just the default templates, automations and lead sources. Each push to `main` redeploys.
+6. Sign in as the Super Admin, then remove `SETUP_ADMIN_PASSWORD` from the environment variables.
+7. **Agents:** go to **Users → Invite**. Until SendGrid is connected the invite isn't emailed, so copy the link from the popup and open it (or send it to the agent) to set the agent's password.
+
+Shared hosting may suspend idle apps, which pauses scheduled automations until the next visit. For production, a Hostinger VPS (Option A) avoids that.
+
 ## First sign-in
 
-The production database starts empty, and the demo seed refuses to run against production. Create the agency and first admin once:
+The production database starts empty, and the demo seed refuses to run against production. Either set the `SETUP_*` variables described in Option C (works on every host), or create the agency and first admin once from a shell:
 
 ```bash
 docker compose -f docker-compose.prod.yml exec app node dist/db/bootstrap.js "Agency Name" "Owner Name" owner@agency.com

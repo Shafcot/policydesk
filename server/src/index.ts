@@ -12,6 +12,6 @@ console.log('Integrations:', Object.entries(integrationStatus()).map(([k, v]) =>
 
 const server = createServer(createApp());
 attachRealtime(server);
-server.listen(env.PORT, () => console.log(`Policy-desk API listening on :${env.PORT}`));
+server.listen(/^\d+$/.test(env.PORT) ? Number(env.PORT) : env.PORT, () => console.log(`Policy-desk API listening on :${env.PORT}`));
 // The background worker runs inside the API process unless RUN_WORKER=false (then run `npm run worker` separately).
 if (process.env.RUN_WORKER !== 'false') startWorker();
