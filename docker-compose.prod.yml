@@ -1,0 +1,39 @@
+# Example production stack on a single server: app + Postgres.
+#   1. cp server/.env.example .env.production and fill it in (DATABASE_URL is set below)
+#   2. docker compose -f docker-compose.prod.yml up -d --build
+# Put a TLS proxy (Caddy, nginx, or the host's load balancer) in front of port 4000. Webhooks need HTTPS.
+services:
+  app:
+    build:
+      context: .
+      args:
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
+        VITE_FIREBASE_VAPID_KEY: ${VITE_FIREBASE_VAPID_KEY:-}
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgres://policydesk:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/policydesk
+      BACKUP_DIR: /data/backups
+    ports: ["4000:4000"]
+    volumes: [appdata:/data]
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: policydesk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: policydesk
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U policydesk"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  pgdata:
+  appdata:

@@ -11,7 +11,7 @@ import {
 import { CARRIERS, COMMERCIAL_LINES, DEFAULT_SETTINGS, NOT_REACHED, PERSONAL_LINES, lineType, type CallResult, type Stage } from '../domain.js';
 import { randomBytes } from 'node:crypto';
 import { hashPassword } from '../lib/auth.js';
-import { installDefaultAutomations } from '../services/automation.js';
+import { DEFAULT_SOURCES, installAgencyDefaults } from './defaults.js';
 
 if (process.env.NODE_ENV === 'production') throw new Error('Refusing to seed a production database');
 
@@ -60,30 +60,8 @@ async function main() {
   const agents = await db.insert(users).values(agentDefs.map((a) => ({ ...a, agencyId: agency.id, role: 'agent' as const, passwordHash: pw, minCallsPerDay: 50, bookingSlug: a.name.split(' ')[0].toLowerCase() }))).returning();
   const maya = agents[0];
 
-  await db.insert(templates).values([
-    { agencyId: agency.id, channel: 'sms', name: 'Welcome', body: 'Hi {first}, thanks for requesting a quote with {agency}! {agent} will call you shortly. Reply STOP to opt out.' },
-    { agencyId: agency.id, channel: 'sms', name: 'Missed you', body: 'Hi {first}, {agent} here from {agency}. Sorry I missed you! When is a good time to talk about your {line} quote?' },
-    { agencyId: agency.id, channel: 'sms', name: 'Booking link', body: 'Hi {first}, pick a time that works for you here: {booking}' },
-    { agencyId: agency.id, channel: 'sms', name: 'Quote ready', body: 'Good news {first}! Your {line} quote is ready. Can I give you a quick call?' },
-    { agencyId: agency.id, channel: 'sms', name: 'Rebook missed appointment', body: 'Hi {first}, we missed you today. Pick a new time that works for you here: {booking}' },
-    { agencyId: agency.id, channel: 'sms', name: 'Review request', body: 'Thanks for choosing {agency}, {first}! Would you leave us a quick review? Google: {google} · Facebook: {facebook} · Yelp: {yelp}' },
-    { agencyId: agency.id, channel: 'email', name: 'Welcome email', subject: 'Welcome to {agency}', body: 'Hi {first},\n\nThanks for reaching out about {line} coverage. {agent} will call you shortly, or you can book a time here: {booking}\n\n{agency}' },
-    { agencyId: agency.id, channel: 'email', name: 'Quote follow-up', subject: 'Your {line} quote', body: 'Hi {first},\n\nFollowing up on the {line} quote I sent. Happy to answer questions or adjust coverage.\n\n{agent}\n{agency}' },
-    { agencyId: agency.id, channel: 'email', name: 'Renewal review', subject: 'Time for your annual policy review', body: 'Hi {first},\n\nYour policy renews soon. Let\'s spend 15 minutes making sure your coverage still fits: {booking}\n\n{agent}' },
-  ]);
-
-  await installDefaultAutomations(db, agency.id);
-  await db.insert(campaigns).values([
-    { agencyId: agency.id, kind: 'birthday', name: 'Birthday messages', channel: 'sms', body: 'Happy birthday, {first}! Wishing you a great year from all of us at {agency}.' },
-    { agencyId: agency.id, kind: 'holiday', name: 'Thanksgiving', holidayDate: '11-26', body: 'Happy Thanksgiving from all of us at {agency}!' },
-    { agencyId: agency.id, kind: 'holiday', name: 'Christmas', holidayDate: '12-25', body: 'Merry Christmas, {first}! Thank you for trusting {agency}.' },
-    { agencyId: agency.id, kind: 'holiday', name: "New Year's Day", holidayDate: '01-01', body: 'Happy New Year, {first}! Here’s to a safe and healthy year.' },
-    { agencyId: agency.id, kind: 'holiday', name: 'Independence Day', holidayDate: '07-04', active: false, body: 'Happy 4th of July from {agency}!' },
-  ]);
-
-  const sourceDefs = [['Facebook Ads', 18, false], ['Google Ads', 32, false], ['EverQuote', 24, true], ['MediaAlpha', 21, true], ['Website Form', 0, false], ['Referral', 0, false], ['Instagram', 12, false]] as const;
-  await db.insert(leadSources).values(sourceDefs.map(([name, costPerLead, isVendor]) => ({ agencyId: agency.id, name, costPerLead, isVendor, webhookKey: randomBytes(16).toString('hex') })));
-  const sourceNames = sourceDefs.map((d) => d[0]);
+  await installAgencyDefaults(db, agency.id, { 'Facebook Ads': 18, 'Google Ads': 32, EverQuote: 24, MediaAlpha: 21, Instagram: 12 });
+  const sourceNames = DEFAULT_SOURCES.map((d) => d[0]);
 
   const plan: [Stage, number][] = [['new', 10], ['attempted', 10], ['followup', 9], ['ready', 6], ['quoted', 8], ['won', 9], ['lost', 5], ['requote', 3], ['recycled', 3]];
   const finalResult: Record<Stage, CallResult> = { new: 'no_answer', attempted: 'no_answer', followup: 'call_back', ready: 'needs_quote', quoted: 'quoted', won: 'sold', lost: 'lost', requote: 'quoted', recycled: 'no_answer' };
