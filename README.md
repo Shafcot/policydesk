@@ -62,6 +62,18 @@ To test replies before the webhooks exist, admins can call `POST /api/dev/inboun
 
 Set `BACKUP_DIR` (and optionally `BACKUP_KEEP`, default 14) and the worker writes one compressed `pg_dump` a day, keeping the newest files. Run one by hand with `npm run backup -w server`. Restore with `pg_restore --clean -d "$DATABASE_URL" <file>`. Copy the folder to off-server storage once hosting is decided.
 
+## Tests
+
+```bash
+npm test     # 30 API tests: auth, permissions, lead intake + webhooks, messaging/opt-out, booking, helpers
+```
+
+Tests use a separate database (`policydesk_test`, or `TEST_DATABASE_URL`) that is migrated and re-seeded on every run. No provider keys are set, so nothing is ever sent. CI runs typecheck, build and tests on every pull request.
+
+## Deploying
+
+One Docker image serves the API, worker and React app on port 4000. See [DEPLOY.md](DEPLOY.md) for hosting options, environment variables, first-admin setup and backups, and [INTEGRATIONS.md](INTEGRATIONS.md) to connect the client's accounts.
+
 ## Database changes
 
 Edit `server/src/db/schema.ts`, then:
@@ -77,6 +89,6 @@ npm run db:migrate
 | --- | --- | --- |
 | 1 · Frontend | All screens, including the automation builder and campaigns | Done |
 | 2 · Backend | Automation engine, worker, campaigns, tasks, live updates, lead import, booking pages, team emails, password reset, login rate limit, daily backups | Done |
-| 3 · Integrations & testing | Twilio calling/recording/SMS, SendGrid, OpenAI, Firebase push, Facebook/Google/vendor lead webhooks — built; switch on with keys (see INTEGRATIONS.md) | Built, awaiting client accounts |
+| 3 · Integrations & testing | Twilio calling/recording/SMS, SendGrid, OpenAI, Firebase push, Facebook/Google/vendor lead webhooks; automated tests, CI, Docker image, deploy guide | Built. Live testing once the client's accounts are connected |
 
-Hosting is not decided yet. Nothing in the code is tied to a provider; file storage goes through a local-disk driver that can be swapped for S3-compatible storage later.
+Hosting is not decided yet. Nothing in the code is tied to a provider: the Docker image runs on any host, and file storage goes through a local-disk driver that can be swapped for S3-compatible storage later.

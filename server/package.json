@@ -13,7 +13,9 @@
     "db:seed": "tsx src/db/seed.ts",
     "worker": "tsx src/worker.ts",
     "start:worker": "node dist/worker.js",
-    "backup": "tsx src/backup.ts"
+    "backup": "tsx src/backup.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@sendgrid/mail": "^8.1.4",
@@ -41,8 +43,11 @@
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.1",
     "@types/pg": "^8.11.10",
+    "@types/supertest": "^6.0.2",
     "drizzle-kit": "^0.28.1",
+    "supertest": "^7.0.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
   }
 }
