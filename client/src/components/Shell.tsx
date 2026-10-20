@@ -10,6 +10,7 @@ import { Icon } from './Icon';
 import { Avatar, colorFor } from './ui';
 import { LeadDrawer } from './LeadDrawer';
 import { useTeam } from '../lib/hooks';
+import { useLiveUpdates } from '../lib/live';
 import { NewLeadModal } from './NewLeadModal';
 import { SpeedDial } from './SpeedDial';
 
@@ -38,11 +39,11 @@ const NAV: [string, NavItem[]][] = [
     { to: '/settings', label: 'Settings', icon: 'sliders', admin: true },
   ]],
 ];
-export const ALL_NAV = NAV.flatMap(([, items]) => items);
 
 export function Shell() {
   const { agency } = useAuth();
   useTeam();
+  useLiveUpdates(true);
   const { isAdmin } = useMe();
   const [open, setOpen] = useState(false);
   const loc = useLocation();
@@ -87,7 +88,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [speed, setSpeed] = useState(false);
 
-  const notifs = useQuery({ queryKey: ['notifications'], queryFn: () => api<Notification[]>('/notifications'), refetchInterval: 30_000 });
+  const notifs = useQuery({ queryKey: ['notifications'], queryFn: () => api<Notification[]>('/notifications'), refetchInterval: 120_000 });
   const unread = (notifs.data ?? []).filter((n) => !n.readAt).length;
   const readAll = useMutation({ mutationFn: () => api('/notifications/read-all', { method: 'POST' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }) });
   const status = useMutation({
@@ -138,7 +139,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
 
 function NotifRow({ n, onOpen }: { n: Notification; onOpen: () => void }) {
   const [, setParams] = useSearchParams();
-  const icon = { lead: 'users', reply: 'msg', warn: 'alert', book: 'calendar', renew: 'shield', bad: 'alert', sale: 'dollar', requote: 'clock' }[n.kind] ?? 'bell';
+  const icon = { lead: 'users', reply: 'msg', warn: 'alert', book: 'calendar', renew: 'shield', bad: 'alert', sale: 'dollar', requote: 'clock', task: 'check', call: 'phone' }[n.kind] ?? 'bell';
   return (
     <div className={`li click ${n.readAt ? '' : 'unread'}`} onClick={() => { if (n.leadId) setParams((p) => { p.set('lead', n.leadId!); return p; }); onOpen(); }}>
       <span className={`n-ico ${n.kind === 'warn' ? 'warn' : n.kind === 'bad' ? 'bad' : ''}`}><Icon name={icon} className="sm" /></span>

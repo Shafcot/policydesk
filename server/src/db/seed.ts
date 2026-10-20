@@ -6,10 +6,11 @@
 import { sql } from 'drizzle-orm';
 import { db, pool } from './client.js';
 import {
-  agencies, appointments, templates, favorites, calls, customers, leads, leadSources, messages, notes, notifications, policies, sales, users,
+  agencies, appointments, templates, favorites, campaigns, calls, customers, leads, leadSources, messages, notes, notifications, policies, sales, users,
 } from './schema.js';
 import { CARRIERS, COMMERCIAL_LINES, DEFAULT_SETTINGS, NOT_REACHED, PERSONAL_LINES, lineType, type CallResult, type Stage } from '../domain.js';
 import { hashPassword } from '../lib/auth.js';
+import { installDefaultAutomations } from '../services/automation.js';
 
 if (process.env.NODE_ENV === 'production') throw new Error('Refusing to seed a production database');
 
@@ -39,7 +40,7 @@ const SUMMARY: Record<CallResult, (f: string, line: string) => string> = {
 };
 
 async function main() {
-  await db.execute(sql`truncate agencies, users, templates, favorites, lead_sources, leads, calls, notes, messages, appointments, customers, policies, sales, notifications cascade`);
+  await db.execute(sql`truncate agencies, users, templates, favorites, automations, automation_runs, tasks, campaigns, job_runs, lead_sources, leads, calls, notes, messages, appointments, customers, policies, sales, notifications cascade`);
   const pw = await hashPassword(process.env.SEED_PASSWORD ?? 'Policydesk123!');
 
   const [agency] = await db.insert(agencies).values({
@@ -63,8 +64,20 @@ async function main() {
     { agencyId: agency.id, channel: 'sms', name: 'Missed you', body: 'Hi {first}, {agent} here from {agency}. Sorry I missed you! When is a good time to talk about your {line} quote?' },
     { agencyId: agency.id, channel: 'sms', name: 'Booking link', body: 'Hi {first}, pick a time that works for you here: {booking}' },
     { agencyId: agency.id, channel: 'sms', name: 'Quote ready', body: 'Good news {first}! Your {line} quote is ready. Can I give you a quick call?' },
+    { agencyId: agency.id, channel: 'sms', name: 'Rebook missed appointment', body: 'Hi {first}, we missed you today. Pick a new time that works for you here: {booking}' },
+    { agencyId: agency.id, channel: 'sms', name: 'Review request', body: 'Thanks for choosing {agency}, {first}! Would you leave us a quick review? Google: {google} · Facebook: {facebook} · Yelp: {yelp}' },
+    { agencyId: agency.id, channel: 'email', name: 'Welcome email', subject: 'Welcome to {agency}', body: 'Hi {first},\n\nThanks for reaching out about {line} coverage. {agent} will call you shortly, or you can book a time here: {booking}\n\n{agency}' },
     { agencyId: agency.id, channel: 'email', name: 'Quote follow-up', subject: 'Your {line} quote', body: 'Hi {first},\n\nFollowing up on the {line} quote I sent. Happy to answer questions or adjust coverage.\n\n{agent}\n{agency}' },
     { agencyId: agency.id, channel: 'email', name: 'Renewal review', subject: 'Time for your annual policy review', body: 'Hi {first},\n\nYour policy renews soon. Let\'s spend 15 minutes making sure your coverage still fits: {booking}\n\n{agent}' },
+  ]);
+
+  await installDefaultAutomations(db, agency.id);
+  await db.insert(campaigns).values([
+    { agencyId: agency.id, kind: 'birthday', name: 'Birthday messages', channel: 'sms', body: 'Happy birthday, {first}! Wishing you a great year from all of us at {agency}.' },
+    { agencyId: agency.id, kind: 'holiday', name: 'Thanksgiving', holidayDate: '11-26', body: 'Happy Thanksgiving from all of us at {agency}!' },
+    { agencyId: agency.id, kind: 'holiday', name: 'Christmas', holidayDate: '12-25', body: 'Merry Christmas, {first}! Thank you for trusting {agency}.' },
+    { agencyId: agency.id, kind: 'holiday', name: "New Year's Day", holidayDate: '01-01', body: 'Happy New Year, {first}! Here’s to a safe and healthy year.' },
+    { agencyId: agency.id, kind: 'holiday', name: 'Independence Day', holidayDate: '07-04', active: false, body: 'Happy 4th of July from {agency}!' },
   ]);
 
   const sourceDefs = [['Facebook Ads', 18, false], ['Google Ads', 32, false], ['EverQuote', 24, true], ['MediaAlpha', 21, true], ['Website Form', 0, false], ['Referral', 0, false], ['Instagram', 12, false]] as const;
@@ -159,6 +172,10 @@ async function main() {
     const [pol] = await db.insert(policies).values({ customerId: cust.id, agentId: agent.id, policyNumber: `${type === 'commercial' ? 'CP' : 'PL'}-${rint(100000, 999999)}`, carrier: pick(CARRIERS), line, premium: p, effectiveDate: eff, renewalDate: ren }).returning();
     if (Date.now() - eff.getTime() < 200 * DAY) await db.insert(sales).values({ agencyId: agency.id, customerId: cust.id, policyId: pol.id, agentId: agent.id, carrier: pol.carrier, line, source: cust.source, premium: p, soldAt: eff });
   }
+
+  const md = `${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+  const allCust = await db.select({ id: customers.id }).from(customers);
+  for (const [i, c] of allCust.entries()) await db.update(customers).set({ dob: i < 2 ? `${1975 + i * 9}-${md}` : `${1955 + rint(0, 45)}-${String(rint(1, 12)).padStart(2, '0')}-${String(rint(1, 28)).padStart(2, '0')}` }).where(sql`id = ${c.id}`);
 
   await db.insert(notifications).values([
     { agencyId: agency.id, userId: null, kind: 'warn', text: 'No agent matched 3 new leads. They are waiting in intake.' },

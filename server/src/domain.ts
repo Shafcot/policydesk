@@ -96,3 +96,28 @@ export const DEFAULT_SETTINGS: AgencySettings = {
 };
 
 export const CARRIERS = ['Progressive', 'Travelers', 'Safeco', 'Nationwide', 'The Hartford', 'Liberty Mutual', 'Hiscox'] as const;
+
+/* ---------- automations (SOW 4) ---------- */
+export const TRIGGERS = ['new_lead', 'stage_change', 'call_result', 'missed_appointment', 'policy_won', 'renewal_date', 'birthday'] as const;
+export type Trigger = (typeof TRIGGERS)[number];
+export const ACTIONS = ['send_sms', 'send_email', 'create_task', 'change_stage', 'assign_agent', 'send_booking_link', 'send_review_request', 'ai_reply', 'alert_team'] as const;
+export type ActionKind = (typeof ACTIONS)[number];
+export const CONDITIONS = ['no_agent_available', 'not_replied', 'is_commercial', 'is_personal'] as const;
+export type ConditionKind = (typeof CONDITIONS)[number];
+
+export type TriggerConfig = {
+  /** stage_change: fire when the lead enters one of these stages (empty = any). */
+  stages?: Stage[];
+  /** call_result: fire on these results (empty = any). */
+  results?: CallResult[];
+  /** renewal_date: days before renewal to fire, e.g. [60, 30]. */
+  daysBefore?: number[];
+  /** stage_change only: how long the lead must stay in the stage before the flow continues is a Wait step. */
+};
+
+export type Step =
+  | { type: 'wait'; amount: number; unit: 'minutes' | 'hours' | 'days' | 'weeks' | 'months' }
+  | { type: 'condition'; condition: ConditionKind }
+  | { type: 'action'; action: ActionKind; templateId?: string | null; stage?: Stage; text?: string };
+
+export const UNIT_MS = { minutes: 6e4, hours: 36e5, days: 864e5, weeks: 6048e5, months: 2592e6 } as const;

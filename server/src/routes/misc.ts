@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { and, desc, eq, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { customers, leadSources, messages, notifications, policies, sales } from '../db/schema.js';
+import { customers, leadSources, notifications, policies, sales } from '../db/schema.js';
 import { CARRIERS, LINES } from '../domain.js';
 import { ah, badRequest } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
-import { getSettings, notify, runAutoMoves, setStage } from '../services/rules.js';
+import { notify, runAutoMoves, setStage } from '../services/rules.js';
+import { fire } from '../services/automation.js';
 import { getVisibleLead } from '../services/scope.js';
 
 export const notificationsRouter = Router();
@@ -37,7 +38,6 @@ wonRouter.post('/:id/won', ah<AuthedRequest>(async (req, res) => {
     effectiveDate: z.string().date(),
   }).parse(req.body);
   if (lead.stage === 'won') throw badRequest('This lead is already won');
-  const st = await getSettings(lead.agencyId);
   const effective = new Date(`${body.effectiveDate}T12:00:00`);
   const renewal = new Date(effective); renewal.setFullYear(renewal.getFullYear() + 1);
   const result = await db.transaction(async (tx) => {
@@ -57,13 +57,7 @@ wonRouter.post('/:id/won', ah<AuthedRequest>(async (req, res) => {
       line: body.line, source: lead.source, premium: body.premium, soldAt: new Date(),
     });
     await setStage(tx, lead, 'won', { id: req.user.id, name: req.user.name }, 'policy created');
-    if (!lead.optOut) {
-      const links = [st.reviewLinks.google && `Google: ${st.reviewLinks.google}`, st.reviewLinks.facebook && `Facebook: ${st.reviewLinks.facebook}`, st.reviewLinks.yelp && `Yelp: ${st.reviewLinks.yelp}`].filter(Boolean).join(' · ');
-      await tx.insert(messages).values({
-        leadId: lead.id, channel: 'sms', direction: 'out', automated: true,
-        body: `Thanks for choosing us, ${lead.firstName}! Would you leave a quick review?${links ? ' ' + links : ''}`,
-      });
-    }
+    await fire(tx, 'policy_won', { agencyId: lead.agencyId, leadId: lead.id, customerId: cust.id, policyId: policy.id });
     await notify(tx, { agencyId: lead.agencyId, userId: null, kind: 'sale', text: `Sale: ${cust.name} · ${body.line} · $${body.premium.toLocaleString('en-US')}`, leadId: lead.id });
     return { customer: cust, policy };
   });
