@@ -466,3 +466,4 @@ details.transcript summary{cursor:pointer;font-size:12.5px;font-weight:600;color
 .drawer .drawer-h,.drawer .drawer-b{min-width:0}
 .soon{max-width:560px;margin:40px auto;text-align:center;display:grid;gap:12px;justify-items:center}
 .soon .ring{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:var(--brand-soft);color:var(--brand)}
+.field .seg,.field .chips{justify-self:start}

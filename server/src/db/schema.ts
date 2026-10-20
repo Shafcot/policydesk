@@ -1,6 +1,6 @@
 import { relations } from 'drizzle-orm';
 import {
-  customType, boolean, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid, varchar,
+  customType, boolean, index, primaryKey, integer, jsonb, pgEnum, pgTable, text, timestamp, uuid, varchar,
 } from 'drizzle-orm/pg-core';
 import { AGENT_STATUSES, CALL_RESULTS, DEFAULT_SETTINGS, ROLES, STAGES, type AgencySettings } from '../domain.js';
 
@@ -129,6 +129,8 @@ export const messages = pgTable('messages', {
   subject: varchar('subject', { length: 240 }),
   body: text('body').notNull(),
   automated: boolean('automated').notNull().default(false),
+  /** queued = waiting for the SMS/email provider (connected in Milestone 3). */
+  status: varchar('status', { length: 20 }).notNull().default('sent'),
   readAt: ts('read_at'),
   createdAt: createdAt(),
 }, (t) => [index('messages_lead_idx').on(t.leadId)]);
@@ -197,6 +199,24 @@ export const notifications = pgTable('notifications', {
   readAt: ts('read_at'),
   createdAt: createdAt(),
 }, (t) => [index('notifications_user_idx').on(t.agencyId, t.userId, t.createdAt)]);
+
+/** Speed-dial favorites per user. */
+export const favorites = pgTable('favorites', {
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  leadId: uuid('lead_id').notNull().references(() => leads.id, { onDelete: 'cascade' }),
+  createdAt: createdAt(),
+}, (t) => [primaryKey({ columns: [t.userId, t.leadId] })]);
+
+/** Saved SMS / email templates. Variables: {first} {agent} {agency} {line} {booking}. */
+export const templates = pgTable('templates', {
+  id: id(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  channel: channelEnum('channel').notNull(),
+  name: varchar('name', { length: 80 }).notNull(),
+  subject: varchar('subject', { length: 240 }),
+  body: text('body').notNull(),
+  createdAt: createdAt(),
+});
 
 export const leadsRelations = relations(leads, ({ one, many }) => ({
   agent: one(users, { fields: [leads.agentId], references: [users.id] }),
