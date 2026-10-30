@@ -4,12 +4,14 @@ import type { NextFunction, Request, Response as ExpressResponse } from 'express
 import twilio from 'twilio';
 import { cfg, enabled } from './settings.js';
 
-let client: ReturnType<typeof twilio> | null = null;
+let client: { key: string; c: ReturnType<typeof twilio> } | null = null;
+/** REST client; rebuilt when the Account SID or Auth Token changes in Settings → Integrations. */
 export function twilioClient() {
   const t = cfg.twilio();
-  if (!t.accountSid || !t.authToken) throw new Error('Twilio is not configured');
-  client ??= twilio(t.accountSid, t.authToken);
-  return client;
+  if (!t.accountSid || !t.authToken) throw new Error('Twilio is not connected. Add the Account SID and Auth Token in Settings → Integrations.');
+  const key = `${t.accountSid}:${t.authToken}`;
+  if (client?.key !== key) client = { key, c: twilio(t.accountSid, t.authToken) };
+  return client.c;
 }
 
 /** Access token for the agent's browser (Voice SDK). Identity = user id, so inbound calls can ring that agent. */

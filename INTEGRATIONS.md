@@ -1,24 +1,32 @@
 # Connecting the client's accounts
 
-Everything is already built. Each integration switches on when its keys go into `server/.env` (and, for push, `client/.env`) and the server restarts. Until then the app works in fallback mode: agents dial from their own phones, and texts and emails are saved as **queued** and sent automatically once the provider is connected.
+Everything is already built. Sign in as the Super Admin and open **Settings → Integrations**:
 
-Check what's connected at **Settings → Integrations**. That page also lists every webhook address to paste into the providers, with copy buttons.
+- Each provider has a card. Paste its keys, click **Save**, then **Test connection**.
+- Keys are stored encrypted in the database. Each service switches on as soon as it's saved; no restart or file editing needed.
+- The page also lists every webhook address to paste into the providers, with copy buttons.
 
-Before you start, the app must be reachable over HTTPS, and `PUBLIC_API_URL` must be set to that address (e.g. `https://crm.agency.com`). Twilio, SendGrid, Facebook and Google all call the app on that address.
+Until a provider is connected, the app works in fallback mode: agents dial from their own phones, and texts and emails are saved as **queued** and sent automatically once the provider is connected.
+
+Keys can also be set as environment variables (`server/.env`, names shown in `server/.env.example`). A key saved in the app wins over the same environment variable. Saved keys are encrypted with `SETTINGS_ENCRYPTION_KEY`, or `JWT_SECRET` if that isn't set, so keep that value the same or re-enter the keys.
+
+The app must be reachable over HTTPS. Twilio, SendGrid, Facebook and Google all call it on that address, which defaults to the address the app is served from (`CLIENT_ORIGIN`). Override it in the **App address** card if needed.
 
 ## 1. Twilio — calling, recording, SMS
 
-1. **Account:** upgrade from trial, then copy the **Account SID** and **Auth Token** → `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`.
-2. **API key** (Console → Account → API keys → Standard) → `TWILIO_API_KEY` (SK…) and `TWILIO_API_SECRET`.
-3. **TwiML App** (Voice → TwiML Apps → Create). Set its Voice Request URL to `https://<app>/webhooks/twilio/voice` (POST) → `TWILIO_TWIML_APP_SID` (AP…).
-4. **Phone numbers:** buy one per agent, plus a main number for `TWILIO_CALLER_ID`.
-   - On each number, set "A call comes in" to `https://<app>/webhooks/twilio/inbound` (POST).
-   - In Settings → Integrations → Agent phone numbers, enter each agent's number.
-5. **SMS:** create a **Messaging Service** and add the numbers → `TWILIO_MESSAGING_SERVICE_SID` (MG…).
-   - Set its incoming-message webhook to `https://<app>/webhooks/twilio/sms`.
-   - Register the brand and campaign for **A2P 10DLC** (Trust Hub → A2P). US texting stays blocked until it's approved, which takes days to weeks.
+1. **Account:** upgrade from trial, then paste the **Account SID** and **Auth Token** into the Twilio card and save.
+2. Click **Set up calling**. It creates the API key and the TwiML App (pointed at this CRM) in the Twilio account and saves them.
+3. **SMS:** in Twilio, create a **Messaging Service**. Set its incoming-message webhook to `https://<app>/webhooks/twilio/sms`, then paste its SID (MG…) into the Twilio card.
+4. **Phone numbers:** open **Phone numbers** in the menu.
+   - **Buy a number** searches by area code and buys it in the Twilio account.
+   - **Add a number** adds one the agency already has. **Import from Twilio** adds every number in the account.
+   - Numbers bought or found in the account are pointed at the CRM automatically (calls ring the assigned user in the browser; texts go to the inbox) and added to the Messaging Service.
+   - Assign one number per user, there or when creating/editing a user. Users without one call from the **default caller ID** in the Twilio card.
+5. **US texting:** register the brand and campaign for **A2P 10DLC** (Trust Hub → A2P). US texting stays blocked until it's approved, which takes days to weeks.
 6. **Optional:** register the business in Trust Hub for CNAM / SHAKEN-STIR, so calls aren't labelled spam.
-7. **Optional:** set `CALL_RECORDING_NOTICE` if agents call two-party-consent states.
+7. **Optional:** fill in **Recording notice** if agents call two-party-consent states.
+
+Agents can also call any number from the **Dial pad** in the Power Dialer. If the number belongs to one of their leads, it's a normal lead call. If it's new, they can save it as a lead after the call to log it with its recording.
 
 Every call is recorded (dual channel). The recording is attached to the logged call and transcribed if OpenAI is connected.
 
@@ -39,10 +47,10 @@ Set `OPENAI_API_KEY`. The models can be changed with `OPENAI_TRANSCRIBE_MODEL` a
 
 ## 4. Firebase — browser push notifications
 
-1. Create a Firebase project and add a **Web app**. Copy its config into `client/.env` (`VITE_FIREBASE_*`).
-2. Under Cloud Messaging → Web Push certificates, generate a key pair → `VITE_FIREBASE_VAPID_KEY`.
-3. Under Project settings → Service accounts, generate a private key. Paste the JSON, on one line, into `FIREBASE_SERVICE_ACCOUNT_JSON` in `server/.env`.
-4. Rebuild the app. Each user then picks **Turn on push notifications** in their account menu.
+1. Create a Firebase project and add a **Web app**. Copy its config values (API key, auth domain, project ID, messaging sender ID, app ID) into the Firebase card.
+2. Under Cloud Messaging → Web Push certificates, generate a key pair. Paste it as **Web push key (VAPID)**.
+3. Under Project settings → Service accounts, generate a private key and paste the whole JSON file into **Service account JSON**. Save, then **Test connection**.
+4. Each user then picks **Turn on push notifications** in their account menu. No rebuild needed.
 
 ## 5. Facebook / Instagram Lead Ads
 
@@ -57,6 +65,8 @@ Set `OPENAI_API_KEY`. The models can be changed with `OPENAI_TRANSCRIBE_MODEL` a
 In each lead form asset, open Lead delivery → Webhook. Set the URL to `https://<app>/webhooks/google-ads` and the key to a secret → `GOOGLE_ADS_WEBHOOK_KEY`. Use "Send test data" to check it; test leads are acknowledged but not saved.
 
 ## 7. Lead vendors and website forms
+
+In **Settings → Integrations → Lead vendors**, click **Add vendor** for each vendor and send them its address. **New address** replaces a vendor's address if it leaks.
 
 Each lead source has its own address, listed in Settings → Integrations: `https://<app>/webhooks/leads/<key>`.
 

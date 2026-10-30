@@ -4,7 +4,7 @@ import { enabled } from './integrations/settings.js';
 import { sendEmail } from './integrations/providers.js';
 import { setTeamEmailProvider } from './services/mailer.js';
 
-if (enabled.email()) setTeamEmailProvider((e) => sendEmail(e).then(() => undefined));
+setTeamEmailProvider((e) => sendEmail(e).then(() => undefined), enabled.email);
 
 startWorker();
 console.log('Policy-desk worker started');

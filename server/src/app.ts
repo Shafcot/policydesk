@@ -20,6 +20,7 @@ import { growthRouter } from './routes/growth.js';
 import { publicRouter } from './routes/public.js';
 import { webhooks } from './integrations/webhooks.js';
 import { integrationsRouter, mediaRouter } from './routes/integrations.js';
+import { numbersRouter } from './routes/numbers.js';
 
 export function createApp() {
   const app = express();
@@ -64,6 +65,7 @@ export function createApp() {
   app.use('/api/admin', adminRouter);
   app.use('/api', growthRouter);
   app.use('/api', integrationsRouter);
+  app.use('/api', numbersRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'not_found' }));
 
     // Production: serve the built React app from the same origin (set CLIENT_DIST, e.g. ../client/dist).

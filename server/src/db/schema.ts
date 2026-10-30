@@ -257,6 +257,24 @@ export const callRecordings = pgTable('call_recordings', {
   createdAt: createdAt(),
 });
 
+/** Provider API keys entered in Settings → Integrations (encrypted). Environment variables are the fallback. */
+export const integrationSettings = pgTable('integration_settings', {
+  key: varchar('key', { length: 64 }).primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** The agency's phone numbers. Each can be assigned to one user (their caller ID and inbound line). */
+export const phoneNumbers = pgTable('phone_numbers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  number: varchar('number', { length: 20 }).notNull().unique(),
+  label: varchar('label', { length: 80 }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  twilioSid: varchar('twilio_sid', { length: 64 }),
+  createdAt: createdAt(),
+}, (t) => [index('phone_numbers_user_idx').on(t.userId)]);
+
 /** Browser push (Firebase Cloud Messaging) registrations. */
 export const deviceTokens = pgTable('device_tokens', {
   token: text('token').primaryKey(),

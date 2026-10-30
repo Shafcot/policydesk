@@ -6,19 +6,21 @@ import { useLookups } from '../lib/hooks';
 import { useToast } from '../lib/toast';
 import { Modal } from './ui';
 
-export function NewLeadModal({ onClose }: { onClose: () => void }) {
+type Initial = Partial<{ firstName: string; lastName: string; phone: string; email: string; company: string; line: string; source: string }>;
+/** `assignToMe` keeps the lead with the person creating it (dial pad), instead of auto-assignment. */
+export function NewLeadModal({ onClose, initial, assignToMe, onCreated, note }: { onClose: () => void; initial?: Initial; assignToMe?: boolean; onCreated?: (l: Lead) => void; note?: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const lookups = useLookups();
-  const [f, setF] = useState({ firstName: '', lastName: '', phone: '', email: '', company: '', line: 'Auto', source: '' });
+  const [f, setF] = useState({ firstName: '', lastName: '', phone: '', email: '', company: '', line: 'Auto', source: '', ...initial });
   const [err, setErr] = useState('');
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const save = useMutation({
-    mutationFn: () => api<Lead>('/leads', { method: 'POST', json: { ...f, source: f.source || lookups.data?.sources[0]?.name || 'Manual' } }),
+    mutationFn: () => api<Lead>('/leads', { method: 'POST', json: { ...f, source: f.source || lookups.data?.sources[0]?.name || 'Manual', ...(assignToMe ? { assignToMe: true } : {}) } }),
     onSuccess: (l) => {
       qc.invalidateQueries({ queryKey: ['leads'] }); qc.invalidateQueries({ queryKey: ['dashboard'] }); qc.invalidateQueries({ queryKey: ['notifications'] });
-      toast(`${l.firstName} ${l.lastName} added${l.agentId ? ' and assigned' : '. No agent matched, so it is waiting in intake'}.`, 'users');
-      onClose();
+      toast(assignToMe ? `${l.firstName} ${l.lastName} added to your leads.` : `${l.firstName} ${l.lastName} added${l.agentId ? ' and assigned' : '. No agent matched, so it is waiting in intake'}.`, 'users');
+      if (onCreated) onCreated(l); else onClose();
     },
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not create the lead'),
   });
@@ -34,7 +36,7 @@ export function NewLeadModal({ onClose }: { onClose: () => void }) {
         <div className="field"><label htmlFor="nl-source">Source</label><select id="nl-source" className="input" value={f.source} onChange={set('source')}>{(lookups.data?.sources ?? []).map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
         <div className="field full"><label htmlFor="nl-company">Company (commercial)</label><input id="nl-company" className="input" value={f.company} onChange={set('company')} /></div>
       </form>
-      <p className="help">The lead lands in intake and auto-assigns by the agency’s rule.</p>
+      <p className="help">{note ?? 'The lead lands in intake and auto-assigns by the agency’s rule.'}</p>
       {err && <p className="optout">{err}</p>}
     </Modal>
   );

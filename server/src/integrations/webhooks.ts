@@ -21,7 +21,7 @@ type RawReq = Request & { rawBody?: Buffer };
 const form = express.urlencoded({ extended: false });
 const json = express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as RawReq).rawBody = buf; } });
 
-async function leadByPhone(phone: string, agencyId?: string) {
+export async function leadByPhone(phone: string, agencyId?: string) {
   const d = last10(phone);
   if (d.length < 10) return null;
   const [l] = await db.select().from(leads).where(and(sql`right(regexp_replace(${leads.phone}, '\\D', '', 'g'), 10) = ${d}`, ...(agencyId ? [eq(leads.agencyId, agencyId)] : []))).orderBy(sql`${leads.updatedAt} desc`).limit(1);
@@ -39,18 +39,23 @@ webhooks.post('/twilio/voice', form, requireTwilioSignature, ah(async (req, res)
   const vr = voiceResponse();
   const userId = String(req.body.From ?? '').replace(/^client:/, '');
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  const lead = req.body.leadId ? await db.query.leads.findFirst({ where: eq(leads.id, String(req.body.leadId)) }) : null;
-  const allowed = user && user.active && lead && lead.agencyId === user.agencyId && (user.role === 'admin' || lead.agentId === user.id) && (!lead.lockedById || lead.lockedById === user.id);
-  const to = toE164(lead?.phone);
-  if (!allowed || !to) {
-    vr.say(allowed ? 'This lead has no valid phone number.' : 'You can’t call this lead. It belongs to another agent or is on another call.');
-    vr.hangup();
-  } else {
-    await db.update(leads).set({ lockedById: user.id }).where(eq(leads.id, lead.id));
-    const dial = vr.dial({ callerId: user.twilioNumber || cfg.twilio().callerId, answerOnBridge: true, timeout: 25, ...recordOpts() });
-    // Optional recording notice played to the lead when they answer (two-party-consent states).
-    if (cfg.twilio().recordingNotice) dial.number({ url: `${api()}/webhooks/twilio/notice` }, to); else dial.number(to);
+  const refuse = (msg: string) => { vr.say(msg); vr.hangup(); res.type('text/xml').send(vr.toString()); };
+  if (!user?.active) return refuse('Your account cannot make calls.');
+  // Dial pad: a typed number. If it belongs to a lead, the same ownership rules apply as calling the lead.
+  let lead = req.body.leadId ? await db.query.leads.findFirst({ where: eq(leads.id, String(req.body.leadId)) }) : null;
+  const typed = !req.body.leadId && req.body.to ? toE164(String(req.body.to)) : null;
+  if (!req.body.leadId && !typed) return refuse('That phone number is not valid.');
+  if (typed) lead = await leadByPhone(typed, user.agencyId);
+  if (lead) {
+    const allowed = lead.agencyId === user.agencyId && (user.role === 'admin' || lead.agentId === user.id) && (!lead.lockedById || lead.lockedById === user.id);
+    if (!allowed) return refuse('You can’t call this lead. It belongs to another agent or is on another call.');
   }
+  const to = typed ?? toE164(lead?.phone);
+  if (!to) return refuse('This lead has no valid phone number.');
+  if (lead) await db.update(leads).set({ lockedById: user.id }).where(eq(leads.id, lead.id));
+  const dial = vr.dial({ callerId: user.twilioNumber || cfg.twilio().callerId, answerOnBridge: true, timeout: 25, ...recordOpts() });
+  // Optional recording notice played to the person called when they answer (two-party-consent states).
+  if (cfg.twilio().recordingNotice) dial.number({ url: `${api()}/webhooks/twilio/notice` }, to); else dial.number(to);
   res.type('text/xml').send(vr.toString());
 }));
 

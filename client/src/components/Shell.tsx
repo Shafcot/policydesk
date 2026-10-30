@@ -12,7 +12,7 @@ import { LeadDrawer } from './LeadDrawer';
 import { useTeam } from '../lib/hooks';
 import { useLiveUpdates } from '../lib/live';
 import { VoiceProvider, useVoice } from '../lib/voice';
-import { enablePush, pushAvailable } from '../lib/push';
+import { enablePush, loadPushConfig, pushAvailable } from '../lib/push';
 import { NewLeadModal } from './NewLeadModal';
 import { SpeedDial } from './SpeedDial';
 
@@ -38,6 +38,7 @@ const NAV: [string, NavItem[]][] = [
   ]],
   ['Admin', [
     { to: '/users', label: 'Users', icon: 'userplus', admin: true },
+    { to: '/numbers', label: 'Phone numbers', icon: 'phone', admin: true },
     { to: '/settings', label: 'Settings', icon: 'sliders', admin: true },
   ]],
 ];
@@ -105,6 +106,8 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [speed, setSpeed] = useState(false);
+  const [pushOk, setPushOk] = useState(false);
+  useEffect(() => { loadPushConfig().then(() => setPushOk(pushAvailable())); }, []);
   const prefs = useMutation({ mutationFn: (v: boolean) => api<User>('/users/me/prefs', { method: 'PATCH', json: { notifyByEmail: v } }), onSuccess: (u) => setUser({ ...me, ...u }) });
 
   const notifs = useQuery({ queryKey: ['notifications'], queryFn: () => api<Notification[]>('/notifications'), refetchInterval: 120_000 });
@@ -146,7 +149,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
             <Popover onClose={() => setMenuOpen(false)}>
               <div className="li" style={{ padding: '12px 14px' }}><div className="grow"><b>{me.name}</b><small>{me.email}</small></div></div>
               <label className="li check" style={{ padding: '10px 14px' }}><input type="checkbox" checked={me.notifyByEmail} onChange={(e) => prefs.mutate(e.target.checked)} />Email me notifications</label>
-              {pushAvailable() && <div className="li click" style={{ padding: '10px 14px' }} onClick={async () => { const r = await enablePush().catch(() => 'unavailable' as const); const msg: Record<typeof r, string> = { enabled: 'Push notifications are on for this browser', denied: 'Notifications are blocked in this browser’s settings', unavailable: 'Push notifications are not available' }; toast(msg[r], 'bell'); }}><Icon name="bell" className="sm" /><div className="grow"><b>Turn on push notifications</b></div></div>}
+              {pushOk && <div className="li click" style={{ padding: '10px 14px' }} onClick={async () => { const r = await enablePush().catch(() => 'unavailable' as const); const msg: Record<typeof r, string> = { enabled: 'Push notifications are on for this browser', denied: 'Notifications are blocked in this browser’s settings', unavailable: 'Push notifications are not available' }; toast(msg[r], 'bell'); }}><Icon name="bell" className="sm" /><div className="grow"><b>Turn on push notifications</b></div></div>}
               <div className="li click" style={{ padding: '10px 14px' }} onClick={logout}><Icon name="left" className="sm" /><div className="grow"><b>Sign out</b></div></div>
             </Popover>
           )}

@@ -1,5 +1,6 @@
 // Super Admin screens: Users and Settings.
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { useMe } from '../lib/auth';
@@ -9,6 +10,8 @@ import { useLookups, useTeam, useTemplates, type Template } from '../lib/hooks';
 import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
 import { Avatar, colorFor, Loading, Modal, PageHead, Pill, ResultPill, StagePill } from '../components/ui';
+import { ApiKeys, LeadVendors } from '../components/IntegrationKeys';
+import { BuySearch, prettyNumber, useNumbers } from '../components/NumberPicker';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const err = (e: unknown, fallback = 'Something went wrong') => (e instanceof ApiError ? e.message : fallback);
@@ -38,12 +41,13 @@ export function Users() {
     <>
       <PageHead title="Users" sub="Invite agents and set roles, lines of insurance, working hours and daily call limits."
         actions={<button className="btn primary" onClick={() => setEdit('new')}><Icon name="userplus" className="sm" />Invite user</button>} />
-      <section className="panel"><div className="tbl-wrap"><table className="tbl"><thead><tr><th>User</th><th>Role</th><th>Lines of insurance</th><th>Hours</th><th className="r">Calls / day</th><th>Status</th><th /></tr></thead><tbody>
+      <section className="panel"><div className="tbl-wrap"><table className="tbl"><thead><tr><th>User</th><th>Role</th><th>Lines of insurance</th><th>Phone number</th><th>Hours</th><th className="r">Calls / day</th><th>Status</th><th /></tr></thead><tbody>
         {team.data.map((u) => (
           <tr key={u.id}>
             <td><div className="who"><Avatar name={u.name} color={u.role === 'admin' ? '--accent' : colorFor(u.id)} /><div><b>{u.name}</b><small>{u.email}</small></div></div></td>
             <td>{u.role === 'admin' ? <Pill color="--accent">Super Admin</Pill> : <Pill color="--info">Agent</Pill>}</td>
             <td>{u.role === 'admin' ? <span className="muted">All</span> : <div className="chips">{u.lines.map((l) => <span key={l} className="tag">{l}</span>)}</div>}</td>
+            <td className="mono">{u.twilioNumber ? prettyNumber(u.twilioNumber) : <span className="muted">Default</span>}</td>
             <td className="num">{u.hoursStart}–{u.hoursEnd}</td>
             <td className="r num">{u.role === 'admin' ? '—' : `${u.callsToday ?? 0} / ${u.maxCallsPerDay}`}</td>
             <td>{u.invited ? <Pill color="--warn">Invite sent</Pill> : <span className="row" style={{ gap: 6 }}><span className={`dot ${u.status}`} />{{ available: 'Available', oncall: 'On call', offline: 'Offline' }[u.status]}</span>}</td>
@@ -78,16 +82,32 @@ function UserModal({ user, onClose, onInvited }: { user: User | null; onClose: (
     minCallsPerDay: user?.minCallsPerDay ?? 50, maxCallsPerDay: user?.maxCallsPerDay ?? 100,
   });
   const toggle = (k: 'lines' | 'daysOff', v: string) => setF({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] });
+  // Phone number: keep, none, one from the list (new or already used), or buy a new one.
+  const nums = useNumbers();
+  const current = nums.data?.numbers.find((n) => n.userId === user?.id && user);
+  const [pick, setPick] = useState<string>('keep'); // 'keep' | 'none' | <number id> | 'buy'
+  const [buyNumber, setBuyNumber] = useState('');
+  const applyNumber = async (userId: string) => {
+    if (pick === 'keep' || (pick === 'none' && !current)) return;
+    if (pick === 'none') await api(`/admin/numbers/${current!.id}`, { method: 'PATCH', json: { userId: null } });
+    else if (pick === 'buy') await api('/admin/numbers/buy', { method: 'POST', json: { number: buyNumber, userId } });
+    else await api(`/admin/numbers/${pick}`, { method: 'PATCH', json: { userId } });
+  };
   const save = useMutation({
-    mutationFn: () => user
-      ? api(`/admin/users/${user.id}`, { method: 'PATCH', json: { name: f.name, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, daysOff: f.daysOff, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay } })
-      : api<{ inviteLink: string }>('/admin/users/invite', { method: 'POST', json: { name: f.name, email: f.email, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay } }),
-    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['users'] }); onClose(); if (!user) onInvited((r as { inviteLink: string }).inviteLink); else toast('User updated'); },
+    mutationFn: async () => {
+      const r = user
+        ? await api(`/admin/users/${user.id}`, { method: 'PATCH', json: { name: f.name, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, daysOff: f.daysOff, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay } })
+        : await api<{ inviteLink: string; user: { id: string } }>('/admin/users/invite', { method: 'POST', json: { name: f.name, email: f.email, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay } });
+      const id = user?.id ?? (r as { user: { id: string } }).user.id;
+      try { await applyNumber(id); } catch (e) { toast(`${user ? 'Saved' : 'User created'}, but the phone number wasn’t set: ${err(e)}`, 'alert'); }
+      return r;
+    },
+    onSuccess: (r) => { ['users', 'numbers'].forEach((k) => qc.invalidateQueries({ queryKey: [k] })); onClose(); if (!user) onInvited((r as { inviteLink: string }).inviteLink); else toast('User updated'); },
     onError: (e) => toast(err(e), 'alert'),
   });
   return (
     <Modal title={user ? `Edit ${user.name}` : 'Invite user'} onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!f.name || !f.email || save.isPending} onClick={() => save.mutate()}>{user ? 'Save changes' : 'Create invitation'}</button></>}>
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!f.name || !f.email || save.isPending || (pick === 'buy' && !buyNumber)} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : user ? 'Save changes' : 'Create invitation'}</button></>}>
       <div className="form-grid">
         <div className="field"><label htmlFor="u-name">Full name</label><input id="u-name" className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>
         <div className="field"><label htmlFor="u-email">Email</label><input id="u-email" className="input" type="email" value={f.email} disabled={!!user} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>
@@ -96,6 +116,15 @@ function UserModal({ user, onClose, onInvited }: { user: User | null; onClose: (
         <div className="field"><label htmlFor="u-min">Min calls / day</label><input id="u-min" className="input num" type="number" value={f.minCallsPerDay} onChange={(e) => setF({ ...f, minCallsPerDay: Number(e.target.value) })} /></div>
         <div className="field"><label htmlFor="u-max">Max calls / day</label><input id="u-max" className="input num" type="number" value={f.maxCallsPerDay} onChange={(e) => setF({ ...f, maxCallsPerDay: Number(e.target.value) })} /></div>
         <div className="field full"><label>Lines of insurance</label><div className="chips">{LINES.map((l) => <button type="button" key={l} className={`chip ${f.lines.includes(l) ? 'on' : ''}`} onClick={() => toggle('lines', l)}>{l}</button>)}</div></div>
+        <div className="field full"><label htmlFor="u-num">Phone number</label>
+          <select id="u-num" className="input" value={pick} onChange={(e) => { setPick(e.target.value); setBuyNumber(''); }}>
+            <option value="keep">{current ? `Keep ${prettyNumber(current.number)}` : user ? 'No number (uses the default caller ID)' : 'No number for now (uses the default caller ID)'}</option>
+            {current && <option value="none">Remove their number</option>}
+            {(nums.data?.numbers ?? []).filter((n) => n.id !== current?.id).map((n) => <option key={n.id} value={n.id}>{prettyNumber(n.number)}{n.label ? ` · ${n.label}` : ''}{n.userName ? ` (taken from ${n.userName})` : ' (free)'}</option>)}
+            {nums.data?.twilio && <option value="buy">Buy a new number…</option>}
+          </select>
+          {pick === 'buy' && <BuySearch value={buyNumber} onPick={setBuyNumber} />}
+        </div>
         {user && <div className="field full"><label>Days off</label><div className="chips">{DAYS.map((d) => <button type="button" key={d} className={`chip ${f.daysOff.includes(d) ? 'on' : ''}`} onClick={() => toggle('daysOff', d)}>{d}</button>)}</div></div>}
       </div>
       {!user && <p className="help">You’ll get an invitation link to send. Permissions are checked on the server for every request.</p>}
@@ -230,7 +259,7 @@ function Sources() {
   const add = useMutation({ mutationFn: () => api('/admin/lead-sources', { method: 'POST', json: { name, isVendor: true } }), onSuccess: () => { setName(''); refresh(); toast('Source added'); }, onError: (e) => toast(err(e), 'alert') });
   return (
     <>
-      <h2>Lead sources & cost per lead</h2><p className="help">Cost per lead feeds the ROI report. Connections to Facebook, Google and vendors arrive in Milestone 3.</p>
+      <h2>Lead sources & cost per lead</h2><p className="help">Cost per lead feeds the ROI report. Vendor addresses for sending leads are under Integrations.</p>
       <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Source</th><th>Type</th><th>Cost per lead ($)</th></tr></thead><tbody>
         {(lookups.data?.sources ?? []).map((s) => <tr key={s.id}><td>{s.name}</td><td>{s.isVendor ? 'Lead vendor' : 'Channel'}</td>
           <td><input className="input num" type="number" style={{ width: 100 }} defaultValue={s.costPerLead} aria-label={`${s.name} cost`} onBlur={(e) => Number(e.target.value) !== s.costPerLead && upd.mutate({ id: s.id, costPerLead: Number(e.target.value) })} /></td></tr>)}
@@ -277,7 +306,7 @@ type Status = { voice: boolean; sms: boolean; email: boolean; inboundEmail: bool
 const INTEGRATIONS: { key: keyof Omit<Status, 'webhooks'>; name: string; does: string; needs: string }[] = [
   { key: 'voice', name: 'Twilio Voice', does: 'Browser calling, power dialer, recordings, inbound calls', needs: 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID, PUBLIC_API_URL' },
   { key: 'sms', name: 'Twilio SMS', does: 'Two-way texting, STOP handling, delivery status', needs: 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_SERVICE_SID (A2P 10DLC approved)' },
-  { key: 'email', name: 'SendGrid email', does: 'Emails to leads, invites, password resets, notification emails', needs: 'SENDGRID_API_KEY, SENDGRID_FROM_EMAIL (verified sender / domain)' },
+  { key: 'email', name: 'SendGrid email', does: 'Emails to leads, invites, password resets, notification emails', needs: '' },
   { key: 'inboundEmail', name: 'SendGrid Inbound Parse', does: 'Email replies land in the inbox and stop automations', needs: 'SENDGRID_INBOUND_DOMAIN, SENDGRID_INBOUND_KEY' },
   { key: 'ai', name: 'OpenAI', does: 'Call transcripts, call summaries, AI speed-to-lead replies', needs: 'OPENAI_API_KEY' },
   { key: 'push', name: 'Firebase push', does: 'Browser push notifications', needs: 'FIREBASE_SERVICE_ACCOUNT_JSON (server) + VITE_FIREBASE_* (app build)' },
@@ -287,42 +316,27 @@ const INTEGRATIONS: { key: keyof Omit<Status, 'webhooks'>; name: string; does: s
 
 function Integrations({ questions, onQuestions }: { questions: string[]; onQuestions: (v: string[]) => void }) {
   const toast = useToast();
-  const qc = useQueryClient();
   const status = useQuery({ queryKey: ['integrations'], queryFn: () => api<Status>('/integrations/status') });
-  const lookups = useLookups();
-  const team = useTeam();
   const copy = (t: string) => navigator.clipboard.writeText(t).then(() => toast('Copied'), () => toast(t, 'copy'));
-  const setNumber = useMutation({
-    mutationFn: (b: { id: string; number: string | null }) => api(`/admin/users/${b.id}/twilio-number`, { method: 'PATCH', json: { number: b.number } }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); toast('Phone number saved'); },
-    onError: (e) => toast(err(e, 'Use the +1XXXXXXXXXX format'), 'alert'),
-  });
   if (!status.data) return <Loading />;
   const origin = status.data.webhooks.leads.replace('/webhooks/leads/<source key>', '');
   return (
     <>
       <h2>Integrations</h2>
-      <p className="help">Each service switches on when its keys are added to the server’s .env file and the server restarts. Nothing else changes in the app.</p>
+      <p className="help">Paste each provider’s keys below. They’re stored encrypted, and each service switches on as soon as its keys are saved. No restart needed.</p>
+      <ApiKeys />
       <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Service</th><th>What it does</th><th>Status</th></tr></thead><tbody>
-        {INTEGRATIONS.map((i) => <tr key={i.key}><td><b>{i.name}</b><small className="muted" style={{ display: 'block', maxWidth: 320, whiteSpace: 'normal' }}>{i.needs}</small></td><td>{i.does}</td><td>{status.data![i.key] ? <Pill color="--ok">Connected</Pill> : <Pill color="--s9">Not connected</Pill>}</td></tr>)}
+        {INTEGRATIONS.map((i) => <tr key={i.key}><td><b>{i.name}</b></td><td>{i.does}</td><td>{status.data![i.key] ? <Pill color="--ok">Connected</Pill> : <Pill color="--s9">Not connected</Pill>}</td></tr>)}
       </tbody></table></div>
       <div className="sep" /><h3>Webhook addresses</h3>
-      <p className="help">Paste these into each provider’s dashboard.</p>
+      <p className="help">Paste these into each provider’s dashboard. “Set up calling” and buying numbers fill in the Twilio ones for you.</p>
       <div className="list">{Object.entries({ 'Twilio TwiML App → Voice URL': status.data.webhooks.twilioVoiceApp, 'Twilio phone numbers → A call comes in': status.data.webhooks.twilioInbound, 'Twilio Messaging Service → incoming messages': status.data.webhooks.twilioSms, 'SendGrid Inbound Parse URL': status.data.webhooks.sendgridInbound, 'Facebook app → Webhooks (Page, leadgen)': status.data.webhooks.facebook, 'Google Ads lead form → Webhook URL': status.data.webhooks.googleAds }).map(([k, v]) => (
-        <div className="li" key={k}><div className="grow"><b>{k}</b><small className="mono">{v}</small></div><button className="icon-btn sm" onClick={() => copy(v)} aria-label={`Copy ${k}`}><Icon name="copy" className="sm" /></button></div>
+        <div className="li" key={k}><div className="grow"><b>{k}</b><small className="mono" style={{ wordBreak: 'break-all' }}>{v}</small></div><button className="icon-btn sm" onClick={() => copy(v)} aria-label={`Copy ${k}`}><Icon name="copy" className="sm" /></button></div>
       ))}</div>
       <div className="sep" /><h3>Lead vendors & website forms</h3>
-      <p className="help">Give each vendor its own address. They POST JSON or form data with first_name, last_name (or full_name), phone, email, zip and insurance_type. Duplicates by phone are ignored.</p>
-      <div className="list">{(lookups.data?.sources ?? []).filter((x) => x.webhookKey).map((x) => { const url = `${origin}/webhooks/leads/${x.webhookKey}`; return (
-        <div className="li" key={x.id}><div className="grow"><b>{x.name}</b><small className="mono">{url}</small></div><button className="icon-btn sm" onClick={() => copy(url)} aria-label={`Copy ${x.name} URL`}><Icon name="copy" className="sm" /></button></div>
-      ); })}</div>
-      <div className="sep" /><h3>Agent phone numbers</h3>
-      <p className="help">Each agent’s Twilio number is their caller ID, and calls to it ring that agent in the browser.</p>
-      <div className="list">{(team.data ?? []).filter((u) => u.role === 'agent').map((u) => (
-        <div className="li" key={u.id}><div className="grow"><b>{u.name}</b></div>
-          <input className="input mono" style={{ width: 170 }} placeholder="+15125550123" defaultValue={u.twilioNumber ?? ''} aria-label={`${u.name} Twilio number`}
-            onBlur={(e) => { const v = e.target.value.trim(); if (v !== (u.twilioNumber ?? '')) setNumber.mutate({ id: u.id, number: v || null }); }} /></div>
-      ))}</div>
+      <LeadVendors origin={origin} />
+      <div className="sep" /><h3>Phone numbers</h3>
+      <p className="help">Add, buy and assign numbers on the <Link to="/numbers">Phone numbers</Link> page.</p>
       <div className="sep" /><h3>Speed-to-lead screening questions</h3>
       <p className="help">The AI reply asks these when a new lead arrives and no agent is free (needs OpenAI). Save with the button below.</p>
       {questions.map((q, i) => <div className="row" key={i} style={{ flexWrap: 'nowrap' }}><input className="input" value={q} onChange={(e) => onQuestions(questions.map((x, j) => (j === i ? e.target.value : x)))} aria-label={`Question ${i + 1}`} /><button className="icon-btn sm" onClick={() => onQuestions(questions.filter((_, j) => j !== i))} aria-label="Remove question"><Icon name="trash" className="sm" /></button></div>)}

@@ -48,7 +48,7 @@ export async function seedDemo() {
     settings: { ...DEFAULT_SETTINGS, teamTarget: 240000, reviewLinks: { google: 'https://g.page/r/demo/review', facebook: 'https://facebook.com/demo/reviews', yelp: 'https://yelp.com/biz/demo' } },
   }).returning();
 
-  const [admin] = await db.insert(users).values({ agencyId: agency.id, name: 'Rafay', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw, bookingSlug: 'rafay' }).returning();
+  const [admin] = await db.insert(users).values({ agencyId: agency.id, name: 'Alex Morgan', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw, bookingSlug: 'alex' }).returning();
   const agentDefs = [
     { name: 'Maya Torres', email: 'maya@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Home', 'Renters', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 42000, maxCallsPerDay: 120 },
     { name: 'Daniel Brooks', email: 'daniel@policydesk.test', hoursStart: '08:30', hoursEnd: '17:30', daysOff: ['Sat', 'Sun'], lines: ['Commercial Auto', 'General Liability', 'Workers Comp', 'BOP'], status: 'available' as const, monthlyTarget: 65000, maxCallsPerDay: 100 },

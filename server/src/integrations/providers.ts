@@ -1,15 +1,16 @@
 // SendGrid (email), OpenAI (transcripts, summaries, AI replies) and Firebase (browser push).
 import sgMail from '@sendgrid/mail';
 import OpenAI, { toFile } from 'openai';
-import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { cert, deleteApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { cfg, enabled } from './settings.js';
 
 /* ---------- SendGrid ---------- */
 
-let sgReady = false;
+let sgKey = '';
 function sg() {
-  if (!sgReady) { sgMail.setApiKey(cfg.sendgrid().apiKey); sgReady = true; }
+  const k = cfg.sendgrid().apiKey;
+  if (k !== sgKey) { sgMail.setApiKey(k); sgKey = k; }
   return sgMail;
 }
 
@@ -22,8 +23,8 @@ export async function sendEmail(e: { to: string; subject: string; text: string; 
 
 /* ---------- OpenAI ---------- */
 
-let ai: OpenAI | null = null;
-const openai = () => (ai ??= new OpenAI({ apiKey: cfg.openai().apiKey }));
+let ai: { key: string; c: OpenAI } | null = null;
+export const openai = () => { const k = cfg.openai().apiKey; if (ai?.key !== k) ai = { key: k, c: new OpenAI({ apiKey: k }) }; return ai.c; };
 
 export async function transcribe(audio: ArrayBuffer, filename = 'call.mp3') {
   const r = await openai().audio.transcriptions.create({ model: cfg.openai().transcribeModel, file: await toFile(Buffer.from(audio), filename) });
@@ -56,15 +57,18 @@ export async function aiSpeedToLead(ctx: { first: string; agency: string; line: 
 
 /* ---------- Firebase Cloud Messaging ---------- */
 
-function fcm() {
-  if (!getApps().length) initializeApp({ credential: cert(JSON.parse(cfg.firebase().serviceAccount)) });
+let fbKey = '';
+async function fcm() {
+  const sa = cfg.firebase().serviceAccount;
+  if (sa !== fbKey) { await Promise.all(getApps().map((a) => deleteApp(a))); fbKey = ''; }
+  if (!getApps().length) { initializeApp({ credential: cert(JSON.parse(sa)) }); fbKey = sa; }
   return getMessaging();
 }
 
 /** Sends a browser push to the given device tokens. Returns tokens Firebase reports as invalid so they can be removed. */
 export async function pushTo(tokens: string[], n: { title: string; body: string; link: string }) {
   if (!tokens.length) return [];
-  const r = await fcm().sendEachForMulticast({ tokens, notification: { title: n.title, body: n.body }, webpush: { fcmOptions: { link: n.link } } });
+  const r = await (await fcm()).sendEachForMulticast({ tokens, notification: { title: n.title, body: n.body }, webpush: { fcmOptions: { link: n.link } } });
   return r.responses.map((x, i) => (!x.success && /registration-token-not-registered|invalid-registration-token|invalid-argument/.test(x.error?.code ?? '') ? tokens[i] : null)).filter(Boolean) as string[];
 }
 

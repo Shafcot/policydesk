@@ -62,17 +62,19 @@ const NewLead = z.object({
   company: z.string().max(160).optional(),
   line: z.enum(LINES),
   source: z.string().min(1).max(80),
+  /** Dial pad: the person who just called this number keeps the lead instead of auto-assignment. */
+  assignToMe: z.boolean().optional(),
 });
 
 /** Manual lead entry. Webhook intake (Facebook, Google, vendors) will reuse createLead() in Milestone 3. */
 leadsRouter.post('/', ah<AuthedRequest>(async (req, res) => {
   const body = NewLead.parse(req.body);
-  const lead = await createLead(req.user.agencyId, body);
+  const lead = await createLead(req.user.agencyId, body, body.assignToMe ? { id: req.user.id, name: req.user.name } : undefined);
   res.status(201).json(lead);
 }));
 
-export async function createLead(agencyId: string, body: z.infer<typeof NewLead>) {
-  const agent = await pickAgent({ agencyId, line: body.line });
+export async function createLead(agencyId: string, body: z.infer<typeof NewLead>, owner?: { id: string; name: string }) {
+  const agent = owner ?? await pickAgent({ agencyId, line: body.line });
   const [lead] = await db.insert(leads).values({
     agencyId, firstName: body.firstName, lastName: body.lastName, phone: body.phone, email: body.email || null,
     company: body.company || null, line: body.line, type: lineType(body.line), source: body.source,
