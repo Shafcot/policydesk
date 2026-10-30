@@ -215,6 +215,8 @@ textarea.input{resize:vertical;min-height:70px}
 .bulk{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--brand);color:var(--on-brand);padding:10px 14px;border-radius:10px;margin-bottom:12px}
 .bulk select{background:var(--surface);color:var(--ink);border:0;border-radius:7px;padding:6px 8px}
 .bulk .btn{background:var(--surface);color:var(--ink);border-color:transparent}
+.bulk .btn.danger{color:var(--bad)}
+.btn.danger-fill{background:var(--bad);border-color:var(--bad);color:#fff}
 
 /* ---------- drawer / modal ---------- */
 .overlay{position:fixed;inset:0;background:var(--overlay);z-index:70;animation:fade .15s}
