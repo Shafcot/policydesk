@@ -5,7 +5,6 @@ All-in-one CRM for insurance agencies: leads, pipeline, power dialer, inbox, aut
 - **Frontend:** React 18 + TypeScript (Vite), React Router, TanStack Query
 - **Backend:** Node.js + TypeScript, Express, Drizzle ORM
 - **Database:** PostgreSQL 16 · **Queue/cache:** Redis 7 (used from Milestone 2)
-- Design reference: the approved HTML prototype at https://htmlcssdemo1.netlify.app
 
 ```
 client/   React app (screens, components, API client)

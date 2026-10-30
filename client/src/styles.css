@@ -473,3 +473,40 @@ details.transcript summary{cursor:pointer;font-size:12.5px;font-weight:600;color
 .booking{width:min(560px,100%);padding:28px;display:grid;gap:16px}
 .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px}
 .slots .chip{text-align:center}
+
+/* integrations: API keys */
+.keygroups{display:grid;gap:8px;margin:4px 0 16px}
+.keygroup{border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.keygroup-h{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;cursor:pointer}
+.keygroup-h b{flex:1}
+.keygroup-h .chev{transform:rotate(-90deg);transition:transform .15s;color:var(--muted)}
+.keygroup.open .keygroup-h .chev{transform:rotate(90deg)}
+.keygroup-h:focus-visible{outline:2px solid var(--brand);outline-offset:-2px;border-radius:10px}
+.keygroup-b{padding:0 14px 14px;display:grid;gap:12px}
+.ok-note{padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--ok) 12%,var(--surface));color:var(--ok);font-weight:600;font-size:13px}
+.note-box{padding:10px 14px;border-radius:10px;background:color-mix(in srgb,var(--warn) 12%,var(--surface));margin-bottom:12px;font-size:13.5px}
+/* phone numbers */
+.buy-search{display:grid;gap:10px}
+.avail{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;max-height:240px;overflow:auto}
+.avail-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;flex-wrap:wrap}
+.avail-item.on{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 8%,var(--surface))}
+.avail-item small{width:100%;padding-left:24px}
+/* dial pad */
+.dialpad{display:grid;gap:12px;justify-items:stretch;max-width:320px;margin:0 auto;width:100%}
+.dial-display{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--line);padding-bottom:6px}
+.dial-display input{flex:1;min-width:0;border:0;background:transparent;font-size:26px;text-align:center;color:var(--ink);padding:6px 0}
+.dial-display input:focus{outline:none}
+.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.keypad .key{display:grid;place-items:center;height:62px;border-radius:14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;font:inherit}
+.keypad .key span{font-size:24px;font-weight:600;line-height:1}
+.keypad .key small{font-size:10px;letter-spacing:.12em;color:var(--muted)}
+.keypad .key:hover{background:var(--bg)}
+.keypad .key:active{transform:scale(.97)}
+.keypad .key:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.keypad.compact{gap:6px;max-width:220px}
+.keypad.compact .key{height:42px;border-radius:10px}
+.keypad.compact .key span{font-size:18px}
+.dial-call{justify-content:center}
+
+.ring.sm{width:44px;height:44px;margin:0}
+.ring.sm svg{width:20px;height:20px}

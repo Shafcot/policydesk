@@ -1,3 +1,4 @@
+import { loadIntegrationSettings } from '../integrations/store.js';
 // Background worker: advances automation runs, sends appointment reminders and scheduled broadcasts,
 // and runs daily jobs (auto-moves, renewals, birthdays, holidays) once per agency per local day.
 import { and, eq, gt, isNull, lte, sql } from 'drizzle-orm';
@@ -82,6 +83,7 @@ export async function tick() {
   const { rows } = await pool.query<{ ok: boolean }>('select pg_try_advisory_lock($1) as ok', [LOCK_KEY]);
   if (!rows[0]?.ok) return;
   try {
+    await loadIntegrationSettings(); // pick up keys saved in Settings → Integrations (other processes)
     await processDueRuns();
     await deliverQueued();
     await reminders();

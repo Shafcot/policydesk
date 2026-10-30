@@ -34,7 +34,7 @@ Other optional variables:
 ## Option A: single server with Docker Compose
 
 ```bash
-git clone git@github.com:Shafcot/policydesk.git && cd policydesk
+git clone <your repository URL> policydesk && cd policydesk
 cp server/.env.example .env.production   # fill in JWT_SECRET, CLIENT_ORIGIN, PUBLIC_API_URL, integration keys
 export POSTGRES_PASSWORD=$(openssl rand -hex 16)   # keep this somewhere safe
 docker compose -f docker-compose.prod.yml up -d --build
@@ -66,7 +66,7 @@ Hostinger's web plans run Node.js apps but don't offer PostgreSQL, so the databa
 2. On the dashboard, click **Connect**, turn **Connection pooling off**, and copy the connection string (`postgresql://…neon.tech/neondb?sslmode=require…`). The background worker uses session locks, which the pooled connection doesn't support.
 
 **2. Web app (hPanel)**
-1. **Websites → Add website → Node.js Apps (Web App) → Import Git repository**. Connect GitHub and pick `Shafcot/policydesk`, branch `main`.
+1. **Websites → Add website → Node.js Apps (Web App) → Import Git repository**. Connect GitHub and pick the repository, branch `main`.
 2. Pick a domain or subdomain that has no website on it (e.g. `crm.yourdomain.com`).
 3. Build settings:
 

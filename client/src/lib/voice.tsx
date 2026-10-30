@@ -7,11 +7,13 @@ type Incoming = { call: Call; from: string };
 type VoiceState = {
   ready: boolean;
   connect: (leadId: string) => Promise<Call>;
+  /** Dial pad: call a typed number (E.164). */
+  connectNumber: (to: string) => Promise<Call>;
   incoming: Incoming | null;
   answer: () => void;
   decline: () => void;
 };
-const Ctx = createContext<VoiceState>({ ready: false, connect: () => Promise.reject(new Error('Calling is not connected')), incoming: null, answer: () => {}, decline: () => {} });
+const Ctx = createContext<VoiceState>({ ready: false, connect: () => Promise.reject(new Error('Calling is not connected')), connectNumber: () => Promise.reject(new Error('Calling is not connected')), incoming: null, answer: () => {}, decline: () => {} });
 
 export function VoiceProvider({ children }: { children: ReactNode }) {
   const device = useRef<Device | null>(null);
@@ -44,9 +46,13 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     if (!device.current) throw new Error('Calling is not connected');
     return device.current.connect({ params: { leadId } });
   }, []);
+  const connectNumber = useCallback(async (to: string) => {
+    if (!device.current) throw new Error('Calling is not connected');
+    return device.current.connect({ params: { to } });
+  }, []);
   const answer = useCallback(() => { incoming?.call.accept(); setIncoming(null); }, [incoming]);
   const decline = useCallback(() => { incoming?.call.reject(); setIncoming(null); }, [incoming]);
-  return <Ctx.Provider value={{ ready, connect, incoming, answer, decline }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ ready, connect, connectNumber, incoming, answer, decline }}>{children}</Ctx.Provider>;
 }
 
 export const useVoice = () => useContext(Ctx);

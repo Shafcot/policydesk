@@ -112,6 +112,13 @@ adminRouter.patch('/lead-sources/:id', ah<AuthedRequest>(async (req, res) => {
   res.json(s);
 }));
 
+/** New webhook key for a vendor (the old address stops working). */
+adminRouter.post('/lead-sources/:id/rotate-key', ah<AuthedRequest>(async (req, res) => {
+  const [s] = await db.update(leadSources).set({ webhookKey: randomBytes(16).toString('hex') }).where(and(eq(leadSources.id, String(req.params.id)), eq(leadSources.agencyId, req.user.agencyId))).returning();
+  if (!s) throw notFound('Source not found');
+  res.json(s);
+}));
+
 /* ---------- templates ---------- */
 
 const Tpl = z.object({ channel: z.enum(['sms', 'email']), name: z.string().min(1).max(80), subject: z.string().max(240).nullable().optional(), body: z.string().min(1).max(5000) });

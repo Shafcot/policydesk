@@ -13,6 +13,7 @@ import { Inbox } from './pages/Inbox';
 import { Customers, Sales, TargetsPage } from './pages/Book';
 import { Reports } from './pages/Reports';
 import { SettingsPage, Users } from './pages/Admin';
+import { Numbers } from './pages/Numbers';
 import { Automations } from './pages/Automations';
 import { Campaigns } from './pages/Campaigns';
 
@@ -42,6 +43,7 @@ export function App() {
         <Route path="reports" element={<Reports />} />
         {isAdmin && <>
           <Route path="users" element={<Users />} />
+          <Route path="numbers" element={<Numbers />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="automations" element={<Automations />} />
           <Route path="campaigns" element={<Campaigns />} />
