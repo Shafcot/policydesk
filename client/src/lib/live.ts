@@ -16,6 +16,7 @@ export function useLiveUpdates(enabled: boolean) {
     socket.on('notification', (n: Notification) => { refresh('notifications'); toast(n.text, 'bell'); });
     socket.on('lead:new', () => refresh('leads', 'dashboard', 'queue'));
     socket.on('lead:changed', (p: { id: string }) => { refresh('leads', 'dashboard', 'queue'); qc.invalidateQueries({ queryKey: ['lead', p.id] }); });
+    socket.on('lead:deleted', (p: { id: string }) => { refresh('leads', 'dashboard', 'queue', 'inbox'); qc.removeQueries({ queryKey: ['lead', p.id] }); });
     socket.on('message:new', (p: { leadId: string }) => { refresh('inbox'); qc.invalidateQueries({ queryKey: ['lead', p.leadId] }); });
     return () => { socket.disconnect(); };
   }, [enabled, qc, toast]);

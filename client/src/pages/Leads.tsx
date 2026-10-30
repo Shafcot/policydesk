@@ -11,6 +11,7 @@ import { Icon } from '../components/Icon';
 import { Avatar, colorFor, Empty, Loading, PageHead, Pill, StagePill } from '../components/ui';
 import { NewLeadModal } from '../components/NewLeadModal';
 import { ImportLeads } from '../components/ImportLeads';
+import { DeleteLeadsModal } from '../components/DeleteLeads';
 
 type Filters = { q: string; stage: string; source: string; agent: string; line: string; type: string; days: string };
 const EMPTY: Filters = { q: '', stage: '', source: '', agent: '', line: '', type: '', days: '' };
@@ -37,6 +38,7 @@ export function Leads() {
   const toast = useToast();
   const lookups = useLookups();
   const team = useTeam();
+  const [deleting, setDeleting] = useState(false);
   const agents = (team.data ?? []).filter((u) => u.role === 'agent');
   const names = useMemo(() => new Map((team.data ?? []).map((u) => [u.id, u.name])), [team.data]);
 
@@ -81,9 +83,11 @@ export function Leads() {
           <select value="" onChange={(e) => e.target.value && bulk.mutate({ agentId: e.target.value })} aria-label="Assign to"><option value="">Assign to…</option>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
           <select value="" onChange={(e) => e.target.value && bulk.mutate({ stage: e.target.value as Stage })} aria-label="Change stage"><option value="">Change stage…</option>{STAGES.filter((s) => s.k !== 'won').map((s) => <option key={s.k} value={s.k}>{s.n}</option>)}</select>
           <button className="btn sm" onClick={() => exportCsv(rows.filter((r) => sel.has(r.id)), names)}><Icon name="download" className="sm" />Export</button>
+          <button className="btn sm danger" onClick={() => setDeleting(true)}><Icon name="trash" className="sm" />Delete</button>
           <button className="btn sm" onClick={() => setSel(new Set())}>Clear</button>
         </div>
       )}
+      {deleting && <DeleteLeadsModal ids={[...sel]} label={sel.size === 1 ? '1 lead' : `${sel.size} leads`} onClose={() => setDeleting(false)} onDeleted={() => { setDeleting(false); setSel(new Set()); }} />}
       <div className="panel"><div className="tbl-wrap"><table className="tbl">
         <thead><tr>
           {isAdmin && <th style={{ width: 36 }}><input type="checkbox" checked={allSel} onChange={() => setSel(allSel ? new Set() : new Set(rows.map((r) => r.id)))} aria-label="Select all" /></th>}

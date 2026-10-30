@@ -145,6 +145,15 @@ leadsRouter.patch('/:id', ah<AuthedRequest>(async (req, res) => {
   res.json(fresh);
 }));
 
+/** Super Admin: permanently deletes leads with their calls, notes, messages, appointments, tasks and automation runs.
+ *  Customers and policies created from a won lead are kept (they just lose the link to the lead). */
+leadsRouter.post('/delete', requireAdmin, ah<AuthedRequest>(async (req, res) => {
+  const { ids } = z.object({ ids: z.array(z.string().uuid()).min(1).max(1000) }).parse(req.body);
+  const gone = await db.delete(leads).where(and(inArray(leads.id, ids), eq(leads.agencyId, req.user.agencyId))).returning({ id: leads.id, agentId: leads.agentId });
+  for (const l of gone) emitLead(req.user.agencyId, l.agentId, 'lead:deleted', { id: l.id });
+  res.json({ deleted: gone.length });
+}));
+
 leadsRouter.post('/bulk', requireAdmin, ah<AuthedRequest>(async (req, res) => {
   const body = z.object({ ids: z.array(z.string().uuid()).min(1).max(500), agentId: z.string().uuid().optional(), stage: z.enum(STAGES).optional() }).parse(req.body);
   if (body.stage === 'won') throw badRequest('Won leads need a policy; mark them won one at a time');

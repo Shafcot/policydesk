@@ -10,6 +10,7 @@ import { useToast } from '../lib/toast';
 import { Icon } from './Icon';
 import { Avatar, Pill, ResultPill } from './ui';
 import { WonModal } from './WonModal';
+import { DeleteLeadsModal } from './DeleteLeads';
 import { Composer } from './Composer';
 import { BookModal } from '../pages/Calendar';
 
@@ -41,6 +42,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
   const [tab, setTab] = useState<'calls' | 'sms' | 'email' | 'notes'>('calls');
   const [won, setWon] = useState(false);
   const [book, setBook] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const settings = usePublicSettings();
   const { data: l, error, isLoading } = useQuery({ queryKey: ['lead', id], queryFn: () => api<LeadDetail>(`/leads/${id}`) });
 
@@ -67,7 +69,10 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
         <div className="row between" style={{ flexWrap: 'nowrap', alignItems: 'flex-start' }}>
           <div className="who"><Avatar name={fullName(l)} color={STG[l.stage].c} size="lg" />
             <div><h2>{fullName(l)}</h2><small className="muted">{l.company ? `${l.company} · ` : ''}{l.type === 'commercial' ? 'Commercial' : 'Personal'} · {l.line}</small></div></div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
+          <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+            {isAdmin && <button className="icon-btn" onClick={() => setDeleting(true)} aria-label="Delete lead" title="Delete lead"><Icon name="trash" /></button>}
+            <button className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
+          </div>
         </div>
         <div className={`owner-note ${l.lockedByName ? 'lock' : ''}`}>
           <Icon name={l.lockedByName ? 'lock' : 'users'} className="sm" />
@@ -179,6 +184,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
         </section>
       </div>
       {won && <WonModal lead={l} onClose={() => setWon(false)} />}
+      {deleting && <DeleteLeadsModal ids={[l.id]} label={fullName(l)} onClose={() => setDeleting(false)} onDeleted={onClose} />}
       {book && <BookModal leadId={l.id} onClose={() => setBook(false)} />}
     </>
   );
