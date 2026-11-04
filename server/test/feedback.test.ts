@@ -197,3 +197,25 @@ describe('Outlook calendar sync', () => {
     }
   });
 });
+
+describe('spam-likely protection', () => {
+  it('reports answer rate per number and flags a low one', async () => {
+    const a = await as(ADMIN);
+    const base = await user(MAYA);
+    const [maya] = await db.insert(users).values({ agencyId: base.agencyId, name: 'Rep Test', email: `rep${Date.now()}@example.com`, role: 'agent' }).returning();
+    const n = await a.post('/api/admin/numbers', { number: '+15125550177', userId: maya.id });
+    // 40 outbound calls this week, 2 answered
+    await db.insert((await import('../src/db/schema.js')).liveCalls).values(Array.from({ length: 40 }, (_, i) => ({
+      agencyId: maya.agencyId, direction: 'out', status: 'ended', agentId: maya.id, customerNumber: '+14155550100', answeredAt: i < 2 ? new Date() : null, endedAt: new Date(),
+    })));
+    const h = await a.get('/api/admin/numbers/health');
+    expect(h.status).toBe(200);
+    const row = h.body.numbers.find((x: { number: string }) => x.number === '+15125550177');
+    expect(row.calls7d).toBeGreaterThanOrEqual(40);
+    expect(row.status).toBe('warning');
+    expect(row.flags[0]).toMatch(/Spam likely/);
+    expect(h.body.trust).toBeNull(); // Twilio not connected in tests
+    expect((await (await as(MAYA)).get('/api/admin/numbers/health')).status).toBe(403);
+    await a.delete(`/api/admin/numbers/${n.body.id}`);
+  });
+});
