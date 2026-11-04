@@ -86,6 +86,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
           <button className="btn" onClick={() => setTab('email')}><Icon name="mail" className="sm" />Email</button>
           <button className="btn" onClick={() => setBook(true)}><Icon name="calendar" className="sm" />Book</button>
           {l.stage !== 'won' && <button className="btn" onClick={() => setWon(true)}><Icon name="shield" className="sm" />Mark won</button>}
+          {isAdmin && <button className="btn danger" onClick={() => setDeleting(true)}><Icon name="trash" className="sm" />Delete lead</button>}
         </div>
       </div>
       <div className="drawer-b">

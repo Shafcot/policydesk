@@ -510,3 +510,6 @@ details.transcript summary{cursor:pointer;font-size:12.5px;font-weight:600;color
 
 .ring.sm{width:44px;height:44px;margin:0}
 .ring.sm svg{width:20px;height:20px}
+
+.icon-btn.danger-icon{color:var(--bad)}
+.icon-btn.danger-icon:hover{background:color-mix(in srgb,var(--bad) 12%,var(--surface))}
