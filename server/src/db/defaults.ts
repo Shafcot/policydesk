@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { DB } from './client.js';
 import { campaigns, leadSources, templates } from './schema.js';
 import { installDefaultAutomations, newLeadCadence, reContactFlow } from '../services/automation.js';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from './client.js';
 import { agencies, automations } from './schema.js';
 
@@ -56,7 +56,14 @@ export async function installAgencyDefaults(x: Exec, agencyId: string, sourceCos
 export async function upgradeAgencyDefaults() {
   for (const a of await db.select({ id: agencies.id }).from(agencies)) {
     const have = await db.query.automations.findFirst({ where: and(eq(automations.agencyId, a.id), eq(automations.name, 'New-lead follow-up cadence')) });
-    if (have) continue;
+    if (have) {
+      // An earlier upgrade added these switched off and never touched since: switch them on.
+      if (!have.active && have.updatedAt.getTime() - have.createdAt.getTime() < 1000) {
+        await db.update(automations).set({ active: true, updatedAt: new Date() })
+          .where(and(eq(automations.agencyId, a.id), inArray(automations.name, ['New-lead follow-up cadence', 'Re-contact quiet leads']), eq(automations.active, false), sql`${automations.updatedAt} - ${automations.createdAt} < interval '1 second'`));
+      }
+      continue;
+    }
     await db.transaction(async (tx) => {
       const existing = new Set((await tx.query.templates.findMany({ where: eq(templates.agencyId, a.id) })).map((x) => x.name));
       const missing = CADENCE_TEMPLATES.filter((x) => !existing.has(x.name));
@@ -64,7 +71,7 @@ export async function upgradeAgencyDefaults() {
       const tpl = await tx.query.templates.findMany({ where: eq(templates.agencyId, a.id) });
       const t = (name: string) => tpl.find((x) => x.name === name)?.id ?? null;
       await tx.update(automations).set({ active: false }).where(and(eq(automations.agencyId, a.id), inArray(automations.name, ['New-lead drip'])));
-      await tx.insert(automations).values([{ ...newLeadCadence(t), agencyId: a.id }, { ...reContactFlow(t), agencyId: a.id }]);
+      await tx.insert(automations).values([{ ...newLeadCadence(t), agencyId: a.id, active: true }, { ...reContactFlow(t), agencyId: a.id, active: true }]);
     });
     console.log(`Added the follow-up cadence to agency ${a.id}`);
   }

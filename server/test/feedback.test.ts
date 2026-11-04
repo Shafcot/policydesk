@@ -95,6 +95,12 @@ describe('follow-up cadence', () => {
     expect(steps.filter((s) => s.type === 'action').every((s) => s.type === 'action' && s.templateId)).toBe(true);
     const recontact = await db.query.automations.findFirst({ where: and(eq(automations.agencyId, a.id), eq(automations.trigger, 'inactive')) });
     expect(recontact?.triggerConfig.days).toBe(45);
+    expect(cadence!.active).toBe(true);
+    expect(recontact!.active).toBe(true);
+    // repairs flows an earlier upgrade added switched off (and nobody edited)
+    await db.update(automations).set({ active: false, updatedAt: cadence!.createdAt }).where(eq(automations.id, cadence!.id));
+    await upgradeAgencyDefaults();
+    expect((await db.query.automations.findFirst({ where: eq(automations.id, cadence!.id) }))!.active).toBe(true);
     // the upgrade is a no-op when the flows exist
     const before = (await db.select().from(automations)).length;
     await upgradeAgencyDefaults();
