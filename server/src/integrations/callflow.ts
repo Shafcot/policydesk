@@ -147,8 +147,7 @@ callWebhooks.post('/customer-status', form, requireTwilioSignature, ah(async (re
 
 callWebhooks.post('/conf-events', form, requireTwilioSignature, ah(async (req, res) => {
   const c = await live(String(req.query.id));
-  res.sendStatus(204);
-  if (!c) return;
+  if (!c) return res.sendStatus(204);
   const ev = String(req.body.StatusCallbackEvent ?? '');
   const sid = String(req.body.CallSid ?? '');
   if (ev === 'conference-start' || (!c.conferenceSid && req.body.ConferenceSid)) await patchLive(c.id, { conferenceSid: String(req.body.ConferenceSid) });
@@ -178,6 +177,7 @@ callWebhooks.post('/conf-events', form, requireTwilioSignature, ah(async (req, r
     }
   }
   if (ev === 'conference-end') await endRoom(fresh, 'completed');
+  res.sendStatus(204);
 }));
 
 /** Conference recording → stored under the call the result is logged with. */
@@ -296,8 +296,7 @@ callWebhooks.post('/agent-join', form, requireTwilioSignature, ah(async (req, re
 
 callWebhooks.post('/agent-status', form, requireTwilioSignature, ah(async (req, res) => {
   const c = await live(String(req.query.id));
-  res.sendStatus(204);
-  if (!c || c.status === 'ended') return;
+  if (!c || c.status === 'ended') return res.sendStatus(204);
   const st = String(req.body.CallStatus ?? '');
   if (st === 'in-progress') { await setOnCall(c.agentId, true); await push(await patchLive(c.id, { status: 'active', answeredAt: new Date() }), 'connected'); }
   else if (c.status === 'ringing' && ['busy', 'no-answer', 'failed', 'canceled', 'completed'].includes(st)) {
@@ -306,6 +305,7 @@ callWebhooks.post('/agent-status', form, requireTwilioSignature, ah(async (req, 
     if (c.customerCallSid) await twilioClient().calls(c.customerCallSid).update({ url: hook('vm', c.id), method: 'POST' }).catch((e) => console.warn('voicemail redirect failed', e));
     await push((await live(c.id))!, 'ended');
   }
+  res.sendStatus(204);
 }));
 
 /** Voicemail prompt for a call nobody answered. */
@@ -356,15 +356,15 @@ export async function missedText(agencyId: string, userId: string | null, from: 
 
 /** Voicemail recorded → saved for the agent it was meant for (or the agency) and they're notified. */
 callWebhooks.post('/voicemail', form, requireTwilioSignature, ah(async (req, res) => {
-  res.sendStatus(204);
   const from = String(req.query.from ?? req.body.From ?? '');
   const agencyId = String(req.query.agency || '') || (await defaultAgency());
-  if (!agencyId || !req.body.RecordingUrl) return;
+  if (!agencyId || !req.body.RecordingUrl) return res.sendStatus(204);
   const userId = req.query.agent ? String(req.query.agent) : null;
   const lead = await leadByPhone(from, agencyId);
   const [vm] = await db.insert(voicemails).values({ agencyId, userId: userId || lead?.agentId || null, leadId: lead?.id ?? null, fromNumber: from.slice(0, 20), recordingUrl: String(req.body.RecordingUrl), durationSec: Number(req.body.RecordingDuration ?? 0) }).returning();
   await notify(db, { agencyId, userId: vm.userId, kind: 'call', text: `New voicemail from ${lead ? `${lead.firstName} ${lead.lastName}` : from} (${vm.durationSec}s)`, leadId: lead?.id ?? null });
   emit(agencyId, vm.userId, 'voicemail:new', { id: vm.id });
+  res.sendStatus(204);
 }));
 
 /* ---------------- Transfers (called from the API) ---------------- */
@@ -434,9 +434,8 @@ callWebhooks.post('/transfer-announce', form, requireTwilioSignature, (_req, res
 });
 
 callWebhooks.post('/transfer-status', form, requireTwilioSignature, ah(async (req, res) => {
-  res.sendStatus(204);
   const c = await live(String(req.query.id));
-  if (!c?.transfer || c.status === 'ended' || req.body.CallSid !== c.transfer.callSid) return;
+  if (!c?.transfer || c.status === 'ended' || req.body.CallSid !== c.transfer.callSid) return res.sendStatus(204);
   const st = String(req.body.CallStatus ?? '');
   if (st === 'in-progress') {
     const joined = await patchLive(c.id, { transfer: { ...c.transfer, state: 'joined' } });
@@ -450,6 +449,7 @@ callWebhooks.post('/transfer-status', form, requireTwilioSignature, ah(async (re
       await push((await live(c.id))!, 'ended');
     } else await push(await patchLive(c.id, { transfer: { ...c.transfer, state: 'failed' } }), undefined, { transferFailed: st });
   }
+  res.sendStatus(204);
 }));
 
 /* ---------------- helpers ---------------- */
