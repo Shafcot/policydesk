@@ -5,11 +5,12 @@ import express, { Router, type Request } from 'express';
 import multer from 'multer';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { agencies, callRecordings, leads, leadSources, users } from '../db/schema.js';
+import { agencies, callRecordings, leads, leadSources, notes, users } from '../db/schema.js';
 import { LINES } from '../domain.js';
 import { ah } from '../lib/http.js';
 import { createLead } from '../routes/leads.js';
 import { receiveReply } from '../services/inbound.js';
+import { getSettings } from '../services/rules.js';
 import { notify } from '../services/rules.js';
 import { attachRecording, updateSmsStatus } from './delivery.js';
 import { last10, toE164 } from './phone.js';
@@ -73,12 +74,30 @@ async function intake(agencyId: string, source: string, l: LeadIn) {
   if (!l.phone || last10(l.phone).length < 10) return { ok: false as const, reason: 'missing phone' };
   if (await leadByPhone(l.phone, agencyId)) return { ok: true as const, duplicate: true };
   const lead = await createLead(agencyId, { firstName: (l.firstName || 'Unknown').slice(0, 80), lastName: (l.lastName || '-').slice(0, 80), phone: l.phone, email: l.email && /@/.test(l.email) ? l.email : '', company: l.company, line: pickLine(l.line) as (typeof LINES)[number], source });
-  const custom = { ...(l.zip ? { zip: l.zip } : {}), ...(l.extra ?? {}) };
+  // Extra form questions fill the agency's custom fields (matched by key, label or a common alias); the rest go in a note.
+  const st = await getSettings(agencyId);
+  const custom: Record<string, string> = l.zip ? { zip: l.zip } : {};
+  const leftovers: string[] = [];
+  for (const [k, v] of Object.entries(l.extra ?? {})) {
+    const key = matchCustomField(k, st.customFields);
+    if (key) custom[key] = v; else leftovers.push(`${k.replace(/_/g, ' ')}: ${v}`);
+  }
   if (Object.keys(custom).length) await db.update(leads).set({ custom }).where(eq(leads.id, lead.id));
+  if (leftovers.length) await db.insert(notes).values({ leadId: lead.id, body: `Form answers from ${source}:\n${leftovers.join('\n')}` });
   return { ok: true as const, id: lead.id };
 }
 
-/** Normalises common field names from vendors and website forms. */
+const norm = (k: string) => k.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+const ALIASES: Record<string, string> = { date_of_birth: 'dob', birthdate: 'dob', birth_date: 'dob', birthday: 'dob', current_carrier: 'carrier', current_insurance: 'carrier', current_insurer: 'carrier', insurance_company: 'carrier', current_insurance_company: 'carrier', postal_code: 'zip', zip_code: 'zip', zipcode: 'zip' };
+/** Which custom field a form question fills, if any. */
+function matchCustomField(question: string, fields: { key: string; label: string }[]) {
+  const n = norm(question);
+  const want = ALIASES[n] ?? n;
+  return fields.find((f) => f.key === want || norm(f.label) === n || norm(f.label) === want)?.key ?? null;
+}
+const KNOWN = new Set(['full_name', 'fullname', 'name', 'first_name', 'firstname', 'fname', 'last_name', 'lastname', 'lname', 'phone', 'phone_number', 'phonenumber', 'mobile', 'cell', 'email', 'email_address', 'emailaddress', 'company', 'company_name', 'business_name', 'line', 'product', 'insurance_type', 'coverage', 'lob', 'zip', 'zip_code', 'postal_code', 'zipcode', 'google_key', 'key', 'source']);
+
+/** Normalises common field names from vendors and website forms. Anything else becomes `extra` (custom fields / note). */
 function fromFields(f: Record<string, unknown>): LeadIn {
   const g = (...keys: string[]) => { for (const k of keys) { const v = f[k] ?? f[k.toLowerCase()]; if (v !== undefined && v !== null && String(v).trim()) return String(v).trim(); } return ''; };
   const full = g('full_name', 'fullName', 'name');
@@ -87,6 +106,7 @@ function fromFields(f: Record<string, unknown>): LeadIn {
     firstName: g('first_name', 'firstName', 'fname') || fn || '', lastName: g('last_name', 'lastName', 'lname') || ln.join(' '),
     phone: g('phone', 'phone_number', 'phoneNumber', 'mobile', 'cell'), email: g('email', 'email_address', 'emailAddress'),
     company: g('company', 'company_name', 'business_name'), line: g('line', 'product', 'insurance_type', 'coverage', 'lob'), zip: g('zip', 'zip_code', 'postal_code', 'zipcode'),
+    extra: Object.fromEntries(Object.entries(f).filter(([k, v]) => !KNOWN.has(norm(k)) && v !== null && v !== undefined && typeof v !== 'object' && String(v).trim()).map(([k, v]) => [k, String(v).trim().slice(0, 500)]).slice(0, 40)),
   };
 }
 
@@ -130,11 +150,14 @@ webhooks.post('/facebook', json, ah(async (req, res) => {
 webhooks.post('/google-ads', json, ah(async (req, res) => {
   const b = req.body ?? {};
   if (!enabled.googleAds() || b.google_key !== cfg.googleAds().webhookKey) return res.sendStatus(403);
-  const col = Object.fromEntries(((b.user_column_data ?? []) as { column_id: string; string_value: string }[]).map((c) => [c.column_id, c.string_value]));
+  const cols = (b.user_column_data ?? []) as { column_id: string; column_name?: string; string_value: string }[];
+  const col = Object.fromEntries(cols.map((c) => [c.column_id, c.string_value]));
+  const standard = new Set(['FULL_NAME', 'FIRST_NAME', 'LAST_NAME', 'PHONE_NUMBER', 'EMAIL', 'POSTAL_CODE', 'COMPANY_NAME']);
+  const extra = Object.fromEntries(cols.filter((c) => !standard.has(c.column_id) && c.string_value).map((c) => [c.column_name || c.column_id, c.string_value]));
   const agencyId = await defaultAgency();
   if (!agencyId || b.is_test) return res.json({ ok: true, test: !!b.is_test });
   const [fn, ...ln] = String(col.FULL_NAME ?? '').split(/\s+/);
-  const r = await intake(agencyId, 'Google Ads', { firstName: col.FIRST_NAME ?? fn ?? '', lastName: col.LAST_NAME ?? ln.join(' '), phone: col.PHONE_NUMBER ?? '', email: col.EMAIL, zip: col.POSTAL_CODE, company: col.COMPANY_NAME });
+  const r = await intake(agencyId, 'Google Ads', { firstName: col.FIRST_NAME ?? fn ?? '', lastName: col.LAST_NAME ?? ln.join(' '), phone: col.PHONE_NUMBER ?? '', email: col.EMAIL, zip: col.POSTAL_CODE, company: col.COMPANY_NAME, extra });
   res.status(r.ok ? 200 : 400).json(r);
 }));
 

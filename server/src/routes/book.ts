@@ -8,6 +8,7 @@ import { LINES, lineType, NOT_REACHED } from '../domain.js';
 import { ah, notFound } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { getSettings } from '../services/rules.js';
+import { targetPeriod } from '../services/hours.js';
 
 export const bookRouter = Router();
 
@@ -120,16 +121,17 @@ bookRouter.get('/sales', ah<AuthedRequest>(async (req, res) => {
 
 bookRouter.get('/targets', ah<AuthedRequest>(async (req, res) => {
   const st = await getSettings(req.user.agencyId);
-  const d = new Date(); const from = new Date(d.getFullYear(), d.getMonth(), 1);
+  const period = targetPeriod(st);
   const rows = await db.select({ agentId: sales.agentId, total: sql<number>`coalesce(sum(${sales.premium}),0)::float`, n: sql<number>`count(*)::int` })
-    .from(sales).where(and(eq(sales.agencyId, req.user.agencyId), gte(sales.soldAt, from))).groupBy(sales.agentId);
+    .from(sales).where(and(eq(sales.agencyId, req.user.agencyId), gte(sales.soldAt, period.start), lt(sales.soldAt, period.end))).groupBy(sales.agentId);
   const team = await db.query.users.findMany({ where: and(eq(users.agencyId, req.user.agencyId), eq(users.role, 'agent'), eq(users.active, true)), orderBy: asc(users.name) });
-  const agents = team.filter((u) => req.user.role === 'admin' || u.id === req.user.id).map((u) => {
+  // Agents see their own target, plus everyone else's when the admin switches that on.
+  const agents = team.filter((u) => req.user.role === 'admin' || u.id === req.user.id || st.agentTargetsVisible).map((u) => {
     const r = rows.find((x) => x.agentId === u.id);
     return { id: u.id, name: u.name, target: u.monthlyTarget, achieved: Number(r?.total ?? 0), sold: r?.n ?? 0 };
   });
   const teamAchieved = rows.reduce((a, r) => a + Number(r.total), 0);
-  res.json({ team: req.user.role === 'admin' || st.teamTargetVisible ? { target: st.teamTarget, achieved: teamAchieved } : null, teamTargetVisible: st.teamTargetVisible, agents });
+  res.json({ team: { target: st.teamTarget, achieved: teamAchieved }, agentTargetsVisible: st.agentTargetsVisible, period: { label: period.label, daysLeft: period.daysLeft }, agents });
 }));
 
 /* ---------- reports ---------- */
@@ -138,7 +140,11 @@ bookRouter.get('/reports', ah<AuthedRequest>(async (req, res) => {
   const { months, agent } = z.object({ months: z.coerce.number().int().min(1).max(24).default(6), agent: z.string().uuid().optional() }).parse(req.query);
   const admin = req.user.role === 'admin';
   const agentId = admin ? agent : req.user.id;
-  const d = new Date(); const from = new Date(d.getFullYear(), d.getMonth() - months + 1, 1);
+  const st = await getSettings(req.user.agencyId);
+  // Months are the agency's target months (e.g. 20th → 19th).
+  const periods = Array.from({ length: months }, (_, i) => targetPeriod(st, new Date(), i - months + 1));
+  const from = periods[0].start;
+  const shift = Math.min(28, Math.max(1, st.targetStartDay || 1)) - 1;
   const sWhere = and(eq(sales.agencyId, req.user.agencyId), gte(sales.soldAt, from), ...(agentId ? [eq(sales.agentId, agentId)] : []));
   const lWhere = and(eq(leads.agencyId, req.user.agencyId), gte(leads.createdAt, from), ...(agentId ? [eq(leads.agentId, agentId)] : []));
 
@@ -148,11 +154,12 @@ bookRouter.get('/reports', ah<AuthedRequest>(async (req, res) => {
     }).from(sales).where(sWhere).groupBy(sales.agentId),
     db.select({ key: sales.source, total: sql<number>`sum(${sales.premium})::float`, n: sql<number>`count(*)::int` }).from(sales).where(sWhere).groupBy(sales.source),
     db.select({ key: sales.carrier, total: sql<number>`sum(${sales.premium})::float`, n: sql<number>`count(*)::int` }).from(sales).where(sWhere).groupBy(sales.carrier),
-    db.select({ key: sql<string>`to_char(date_trunc('month', ${sales.soldAt}), 'YYYY-MM')`, total: sql<number>`sum(${sales.premium})::float` }).from(sales).where(sWhere).groupBy(sql`1`),
+    db.select({ key: sql<string>`to_char(date_trunc('month', (${sales.soldAt} at time zone ${st.timezone}) - make_interval(days => ${shift})), 'YYYY-MM')`, total: sql<number>`sum(${sales.premium})::float` }).from(sales).where(sWhere).groupBy(sql`1`),
     db.select({ key: leads.source, n: sql<number>`count(*)::int`, won: sql<number>`count(*) filter (where ${leads.stage} = 'won')::int` }).from(leads).where(lWhere).groupBy(leads.source),
     db.select({ userId: calls.userId, n: sql<number>`count(*)::int`,
       contacts: sql<number>`count(*) filter (where ${calls.result} not in (${sql.join(NOT_REACHED.map((r) => sql`${r}`), sql`, `)}))::int`,
       quotes: sql<number>`count(*) filter (where ${calls.result} = 'quoted')::int`,
+      talk: sql<number>`coalesce(sum(${calls.durationSec}),0)::int`,
     }).from(calls).innerJoin(leads, eq(calls.leadId, leads.id)).where(and(eq(leads.agencyId, req.user.agencyId), gte(calls.startedAt, from), ...(agentId ? [eq(calls.userId, agentId)] : []))).groupBy(calls.userId),
     db.select({ agentId: leads.agentId, n: sql<number>`count(*)::int`, won: sql<number>`count(*) filter (where ${leads.stage} = 'won')::int` }).from(leads).where(lWhere).groupBy(leads.agentId),
     db.select().from(leadSources).where(eq(leadSources.agencyId, req.user.agencyId)),
@@ -160,10 +167,10 @@ bookRouter.get('/reports', ah<AuthedRequest>(async (req, res) => {
   const team = await db.query.users.findMany({ where: and(eq(users.agencyId, req.user.agencyId), eq(users.role, 'agent')), orderBy: asc(users.name) });
   const scopedTeam = agentId ? team.filter((u) => u.id === agentId) : team;
 
-  const monthsList = Array.from({ length: months }, (_, i) => { const x = new Date(from.getFullYear(), from.getMonth() + i, 1); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; });
+
   res.json({
     from: from.toISOString(),
-    production: monthsList.map((m) => ({ month: m, premium: Number(byMonth.find((r) => r.key === m)?.total ?? 0) })),
+    production: periods.map((p) => ({ month: p.key, label: p.label, premium: Number(byMonth.find((r) => r.key === p.key)?.total ?? 0) })),
     bySource: bySource.map((r) => ({ name: r.key ?? 'Unknown', premium: Number(r.total), sold: r.n })).sort((a, b) => b.premium - a.premium),
     byCarrier: byCarrier.map((r) => ({ name: r.key, premium: Number(r.total), sold: r.n })).sort((a, b) => b.premium - a.premium),
     roi: sources.map((s) => {
@@ -174,7 +181,7 @@ bookRouter.get('/reports', ah<AuthedRequest>(async (req, res) => {
     agents: scopedTeam.map((u) => {
       const s = byAgent.find((x) => x.agentId === u.id); const c = perfCalls.find((x) => x.userId === u.id); const l = leadsByAgent.find((x) => x.agentId === u.id);
       const premium = Number(s?.total ?? 0), personal = Number(s?.personal ?? 0);
-      return { id: u.id, name: u.name, premium, sold: s?.n ?? 0, personal, commercial: premium - personal, calls: c?.n ?? 0, contacts: c?.contacts ?? 0, quotes: c?.quotes ?? 0, leads: l?.n ?? 0, conversion: l?.n ? Math.round((l.won / l.n) * 100) : 0 };
+      return { id: u.id, name: u.name, premium, sold: s?.n ?? 0, personal, commercial: premium - personal, calls: c?.n ?? 0, contacts: c?.contacts ?? 0, quotes: c?.quotes ?? 0, talkSec: c?.talk ?? 0, avgCallSec: c?.n ? Math.round((c.talk ?? 0) / c.n) : 0, leads: l?.n ?? 0, conversion: l?.n ? Math.round((l.won / l.n) * 100) : 0 };
     }),
   });
 }));

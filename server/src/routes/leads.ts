@@ -120,6 +120,8 @@ const Patch = z.object({
   custom: z.record(z.string()).optional(),
   email: z.string().email().or(z.literal('')).optional(),
   automation: z.string().nullable().optional(),
+  /** Take over from the AI ('stopped') or hand back to it (null = AI may answer again). */
+  aiStatus: z.enum(['stopped']).nullable().optional(),
 });
 
 leadsRouter.patch('/:id', ah<AuthedRequest>(async (req, res) => {
@@ -133,6 +135,7 @@ leadsRouter.patch('/:id', ah<AuthedRequest>(async (req, res) => {
     if (body.followUpAt !== undefined) set.followUpAt = body.followUpAt ? new Date(body.followUpAt) : null;
     if (body.custom) set.custom = { ...lead.custom, ...body.custom };
     if (body.email !== undefined) set.email = body.email || null;
+    if (body.aiStatus !== undefined) { set.aiStatus = body.aiStatus; if (body.aiStatus === null) set.aiTurns = 0; }
     await tx.update(leads).set(set).where(eq(leads.id, lead.id));
     if (body.automation === null) await stopRuns(tx, lead.id, 'manual');
     if (body.stage) await setStage(tx, lead, body.stage, { id: req.user.id, name: req.user.name });

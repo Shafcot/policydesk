@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import { customers, leadSources, notifications, policies, sales } from '../db/schema.js';
 import { CARRIERS, LINES } from '../domain.js';
+import { getSettings } from '../services/rules.js';
 import { ah, badRequest } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { notify, runAutoMoves, setStage } from '../services/rules.js';
@@ -68,7 +69,8 @@ export const metaRouter = Router();
 metaRouter.get('/lookups', ah<AuthedRequest>(async (req, res) => {
   const sources = await db.select().from(leadSources).where(eq(leadSources.agencyId, req.user.agencyId));
   // Webhook keys are secrets: only admins see them.
-  res.json({ sources: sources.map((x) => (req.user.role === 'admin' ? x : { ...x, webhookKey: null })), carriers: CARRIERS, lines: LINES });
+  const st = await getSettings(req.user.agencyId);
+  res.json({ sources: sources.map((x) => (req.user.role === 'admin' ? x : { ...x, webhookKey: null })), carriers: st.carriers.length ? st.carriers : CARRIERS, lines: LINES });
 }));
 metaRouter.post('/auto-moves', requireAdmin, ah<AuthedRequest>(async (req, res) => {
   res.json({ moved: await runAutoMoves(req.user.agencyId) });
