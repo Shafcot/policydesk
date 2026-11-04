@@ -71,7 +71,7 @@ workRouter.patch('/appointments/:id', ah<AuthedRequest>(async (req, res) => {
   if (!appt) throw notFound('Appointment not found');
   const lead = await getVisibleLead(req.user, appt.leadId);
   if (req.user.role !== 'admin' && appt.userId !== req.user.id) throw forbidden();
-  await db.update(appointments).set({ status }).where(eq(appointments.id, appt.id));
+  await db.update(appointments).set({ status, updatedAt: new Date() }).where(eq(appointments.id, appt.id));
   if (status === 'noshow') {
     // SOW 6 missed appointment: the "Missed appointment" automation texts the lead to rebook and alerts agent + admin.
     const started = await fire(db, 'missed_appointment', { agencyId: lead.agencyId, leadId: lead.id });

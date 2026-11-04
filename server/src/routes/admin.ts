@@ -42,6 +42,7 @@ adminRouter.patch('/users/:id', ah<AuthedRequest>(async (req, res) => {
     name: z.string().min(1).max(120).optional(), role: z.enum(['admin', 'agent']).optional(), lines: z.array(z.enum(LINES)).optional(),
     hoursStart: Hours.optional(), hoursEnd: Hours.optional(), daysOff: Days.optional(),
     minCallsPerDay: z.number().int().min(0).optional(), maxCallsPerDay: z.number().int().min(0).optional(), monthlyTarget: z.number().min(0).optional(),
+    calendarEmail: z.string().email().or(z.literal('')).nullable().optional().transform((v) => (v === '' ? null : v)),
   }).parse(req.body);
   const id = String(req.params.id);
   if (id === req.user.id && b.role === 'agent') throw badRequest('You cannot remove your own Super Admin role');

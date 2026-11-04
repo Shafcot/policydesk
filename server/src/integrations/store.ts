@@ -51,6 +51,11 @@ export const GROUPS: Group[] = [
     { key: 'FACEBOOK_PAGE_ACCESS_TOKEN', label: 'Page access token', secret: true },
     { key: 'FACEBOOK_GRAPH_VERSION', label: 'Graph API version', placeholder: 'v21.0' },
   ] },
+  { id: 'microsoft', name: 'Outlook / Microsoft 365 calendar', about: 'In the Microsoft Entra admin center, register an app, add the Microsoft Graph application permission Calendars.ReadWrite and grant admin consent, then create a client secret. CRM appointments then appear in each user’s Outlook calendar, and Outlook busy times block booking.', fields: [
+    { key: 'MS_TENANT_ID', label: 'Directory (tenant) ID' },
+    { key: 'MS_CLIENT_ID', label: 'Application (client) ID' },
+    { key: 'MS_CLIENT_SECRET', label: 'Client secret value', secret: true },
+  ] },
   { id: 'google', name: 'Google Ads lead forms', about: 'The key you enter in the lead form\'s webhook settings.', fields: [
     { key: 'GOOGLE_ADS_WEBHOOK_KEY', label: 'Webhook key', secret: true },
   ] },

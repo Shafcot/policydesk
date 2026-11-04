@@ -160,3 +160,40 @@ describe('targets and activity', () => {
     await a.patch('/api/admin/settings', { settings: { targetStartDay: 1, carriers: [], phoneMenu: DEFAULT_SETTINGS.phoneMenu } });
   });
 });
+
+describe('Outlook calendar sync', () => {
+  it('writes appointments to the user’s Outlook calendar and blocks Outlook busy times', async () => {
+    const { syncOutlook } = await import('../src/integrations/outlook.js');
+    const { freeSlots } = await import('../src/services/booking.js');
+    process.env.MS_TENANT_ID = 'tenant'; process.env.MS_CLIENT_ID = 'client'; process.env.MS_CLIENT_SECRET = 'secret';
+    const calls: { url: string; method: string; body?: string }[] = [];
+    const realFetch = globalThis.fetch;
+    const maya = await user(MAYA);
+    const slots = await freeSlots(maya, 'America/Chicago', 3);
+    const blocked = slots[0].slots[0];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method ?? 'GET', body: init?.body ? String(init.body) : undefined });
+      if (String(url).includes('/oauth2/v2.0/token')) return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+      if (String(url).includes('/calendarView')) return new Response(JSON.stringify({ value: [{ start: { dateTime: blocked.replace('Z', '') }, end: { dateTime: new Date(new Date(blocked).getTime() + 30 * 60_000).toISOString().replace('Z', '') }, showAs: 'busy', isCancelled: false }] }), { status: 200 });
+      if (String(url).endsWith('/events') && init?.method === 'POST') return new Response(JSON.stringify({ id: 'EVT1' }), { status: 201 });
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+    try {
+      const after = await freeSlots(maya, 'America/Chicago', 3);
+      expect(after.flatMap((d) => d.slots)).not.toContain(blocked);
+      const lead = await newLead();
+      const [appt] = await db.insert(appointments).values({ leadId: lead.id, userId: maya.id, startsAt: new Date(Date.now() + 2 * 864e5), durationMin: 30, type: 'Discovery call' }).returning();
+      await syncOutlook(1000);
+      const create = calls.find((c) => c.method === 'POST' && c.url.endsWith('/events') && JSON.parse(c.body!).subject.includes('Ai Tester') && c.url.includes(encodeURIComponent(maya.email)));
+      expect(create).toBeTruthy();
+      expect((await db.query.appointments.findFirst({ where: eq(appointments.id, appt.id) }))!.outlookEventId).toBe('EVT1');
+      // cancelling deletes the Outlook event
+      await db.update(appointments).set({ status: 'cancelled', updatedAt: new Date(Date.now() + 1000) }).where(eq(appointments.id, appt.id));
+      await syncOutlook(1000);
+      expect(calls.some((c) => c.method === 'DELETE' && c.url.includes('/events/EVT1'))).toBe(true);
+    } finally {
+      globalThis.fetch = realFetch;
+      delete process.env.MS_TENANT_ID; delete process.env.MS_CLIENT_ID; delete process.env.MS_CLIENT_SECRET;
+    }
+  });
+});

@@ -20,6 +20,7 @@ export const cfg = {
   firebaseWeb: () => ({ apiKey: v('FIREBASE_WEB_API_KEY'), authDomain: v('FIREBASE_WEB_AUTH_DOMAIN'), projectId: v('FIREBASE_WEB_PROJECT_ID'), messagingSenderId: v('FIREBASE_WEB_MESSAGING_SENDER_ID'), appId: v('FIREBASE_WEB_APP_ID'), vapidKey: v('FIREBASE_WEB_VAPID_KEY') }),
   facebook: () => ({ appSecret: v('FACEBOOK_APP_SECRET'), verifyToken: v('FACEBOOK_VERIFY_TOKEN'), pageToken: v('FACEBOOK_PAGE_ACCESS_TOKEN'), graphVersion: v('FACEBOOK_GRAPH_VERSION') || 'v21.0' }),
   googleAds: () => ({ webhookKey: v('GOOGLE_ADS_WEBHOOK_KEY') }),
+  microsoft: () => ({ tenantId: v('MS_TENANT_ID'), clientId: v('MS_CLIENT_ID'), clientSecret: v('MS_CLIENT_SECRET') }),
   /** Agency that receives leads from Facebook / Google webhooks (single-agency installs can leave it empty = first agency). */
   defaultAgencyId: () => v('DEFAULT_AGENCY_ID'),
 };
@@ -33,6 +34,7 @@ export const enabled = {
   push: () => !!cfg.firebase().serviceAccount,
   facebook: () => { const f = cfg.facebook(); return !!(f.appSecret && f.verifyToken && f.pageToken); },
   googleAds: () => !!cfg.googleAds().webhookKey,
+  outlook: () => { const m = cfg.microsoft(); return !!(m.tenantId && m.clientId && m.clientSecret); },
 };
 
 export function integrationStatus() {

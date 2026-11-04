@@ -11,6 +11,7 @@ import { getSettings, notify, runAutoMoves } from './rules.js';
 import { sendBroadcast } from './campaigns.js';
 import { backupDatabase } from './backup.js';
 import { deliverQueued } from '../integrations/delivery.js';
+import { syncOutlook } from '../integrations/outlook.js';
 
 const LOCK_KEY = 4207061; // only one worker process does the work at a time
 
@@ -101,6 +102,7 @@ export async function tick() {
     await loadIntegrationSettings(); // pick up keys saved in Settings → Integrations (other processes)
     await processDueRuns();
     await deliverQueued();
+    await syncOutlook().catch((e) => console.error('Outlook sync failed', e));
     await reminders();
     const due = await db.query.campaigns.findMany({ where: and(eq(campaigns.kind, 'broadcast'), isNull(campaigns.sentAt), lte(campaigns.scheduledFor, new Date())) });
     for (const c of due) {
