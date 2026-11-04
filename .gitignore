@@ -9,3 +9,6 @@ uploads/
 *.tsbuildinfo
 .vite/
 backups/
+
+# dependency folders, including symlinks to them
+node_modules
