@@ -39,6 +39,7 @@ export function Leads() {
   const lookups = useLookups();
   const team = useTeam();
   const [deleting, setDeleting] = useState(false);
+  const [deleteOne, setDeleteOne] = useState<{ id: string; name: string } | null>(null);
   const agents = (team.data ?? []).filter((u) => u.role === 'agent');
   const names = useMemo(() => new Map((team.data ?? []).map((u) => [u.id, u.name])), [team.data]);
 
@@ -87,11 +88,12 @@ export function Leads() {
           <button className="btn sm" onClick={() => setSel(new Set())}>Clear</button>
         </div>
       )}
+      {deleteOne && <DeleteLeadsModal ids={[deleteOne.id]} label={deleteOne.name} onClose={() => setDeleteOne(null)} onDeleted={() => { setDeleteOne(null); setSel((x) => { const n = new Set(x); n.delete(deleteOne.id); return n; }); }} />}
       {deleting && <DeleteLeadsModal ids={[...sel]} label={sel.size === 1 ? '1 lead' : `${sel.size} leads`} onClose={() => setDeleting(false)} onDeleted={() => { setDeleting(false); setSel(new Set()); }} />}
       <div className="panel"><div className="tbl-wrap"><table className="tbl">
         <thead><tr>
           {isAdmin && <th style={{ width: 36 }}><input type="checkbox" checked={allSel} onChange={() => setSel(allSel ? new Set() : new Set(rows.map((r) => r.id)))} aria-label="Select all" /></th>}
-          <th>Lead</th><th>Stage</th><th>Source</th><th>Line</th><th>Agent</th><th>{tab === 'intake' ? 'Received' : 'Last contact'}</th><th>Follow-up</th><th>Flags</th>
+          <th>Lead</th><th>Stage</th><th>Source</th><th>Line</th><th>Agent</th><th>{tab === 'intake' ? 'Received' : 'Last contact'}</th><th>Follow-up</th><th>Flags</th>{isAdmin && <th aria-label="Actions" />}
         </tr></thead>
         <tbody>
           {rows.map((l) => {
@@ -113,6 +115,7 @@ export function Leads() {
                 <td className="muted">{tab === 'intake' ? ago(l.createdAt) : ago(l.lastContactAt)}</td>
                 <td style={overdue ? { color: 'var(--bad)', fontWeight: 600 } : undefined} className={overdue ? '' : 'muted'}>{['won', 'lost', 'recycled'].includes(l.stage) ? '—' : fdt(l.followUpAt)}</td>
                 <td>{(l.flags ?? []).map((x) => <Pill key={x} color="--warn">{x === 'duplicate' ? 'Duplicate' : 'No email'}</Pill>)}</td>
+                {isAdmin && <td className="r" onClick={(e) => e.stopPropagation()}><button className="icon-btn sm danger-icon" onClick={() => setDeleteOne({ id: l.id, name: fullName(l) })} aria-label={`Delete ${fullName(l)}`} title="Delete lead"><Icon name="trash" className="sm" /></button></td>}
               </tr>
             );
           })}
