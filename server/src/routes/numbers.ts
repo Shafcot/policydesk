@@ -10,7 +10,7 @@ import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { cfg } from '../integrations/settings.js';
 import { toE164 } from '../integrations/phone.js';
 import { twilioClient } from '../integrations/twilio.js';
-import { leadByPhone } from '../integrations/webhooks.js';
+import { leadByPhone } from '../integrations/callflow.js';
 
 export const numbersRouter = Router();
 type Exec = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];

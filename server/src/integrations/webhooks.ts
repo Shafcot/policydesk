@@ -14,92 +14,20 @@ import { notify } from '../services/rules.js';
 import { attachRecording, updateSmsStatus } from './delivery.js';
 import { last10, toE164 } from './phone.js';
 import { cfg, enabled } from './settings.js';
-import { messagingResponse, requireTwilioSignature, voiceResponse } from './twilio.js';
+import { messagingResponse, requireTwilioSignature } from './twilio.js';
+import { callWebhooks, leadByPhone } from './callflow.js';
 
 export const webhooks = Router();
 type RawReq = Request & { rawBody?: Buffer };
 const form = express.urlencoded({ extended: false });
 const json = express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as RawReq).rawBody = buf; } });
 
-export async function leadByPhone(phone: string, agencyId?: string) {
-  const d = last10(phone);
-  if (d.length < 10) return null;
-  const [l] = await db.select().from(leads).where(and(sql`right(regexp_replace(${leads.phone}, '\\D', '', 'g'), 10) = ${d}`, ...(agencyId ? [eq(leads.agencyId, agencyId)] : []))).orderBy(sql`${leads.updatedAt} desc`).limit(1);
-  return l ?? null;
-}
+export { leadByPhone };
 const defaultAgency = async () => cfg.defaultAgencyId() || (await db.select({ id: agencies.id }).from(agencies).orderBy(agencies.createdAt).limit(1))[0]?.id;
 
-/* ---------------- Twilio voice ---------------- */
+/* ---------------- Twilio voice: see callflow.ts (conference-based calls, phone menu, transfers) ---------------- */
 
-const api = () => cfg.publicApiUrl();
-const recordOpts = () => ({ record: 'record-from-answer-dual' as const, recordingStatusCallback: `${api()}/webhooks/twilio/recording`, recordingStatusCallbackEvent: ['completed' as const] });
-
-/** TwiML App voice URL: the agent's browser dials a lead (param leadId). Ownership is checked again here. */
-webhooks.post('/twilio/voice', form, requireTwilioSignature, ah(async (req, res) => {
-  const vr = voiceResponse();
-  const userId = String(req.body.From ?? '').replace(/^client:/, '');
-  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  const refuse = (msg: string) => { vr.say(msg); vr.hangup(); res.type('text/xml').send(vr.toString()); };
-  if (!user?.active) return refuse('Your account cannot make calls.');
-  // Dial pad: a typed number. If it belongs to a lead, the same ownership rules apply as calling the lead.
-  let lead = req.body.leadId ? await db.query.leads.findFirst({ where: eq(leads.id, String(req.body.leadId)) }) : null;
-  const typed = !req.body.leadId && req.body.to ? toE164(String(req.body.to)) : null;
-  if (!req.body.leadId && !typed) return refuse('That phone number is not valid.');
-  if (typed) lead = await leadByPhone(typed, user.agencyId);
-  if (lead) {
-    const allowed = lead.agencyId === user.agencyId && (user.role === 'admin' || lead.agentId === user.id) && (!lead.lockedById || lead.lockedById === user.id);
-    if (!allowed) return refuse('You can’t call this lead. It belongs to another agent or is on another call.');
-  }
-  const to = typed ?? toE164(lead?.phone);
-  if (!to) return refuse('This lead has no valid phone number.');
-  if (lead) await db.update(leads).set({ lockedById: user.id }).where(eq(leads.id, lead.id));
-  const dial = vr.dial({ callerId: user.twilioNumber || cfg.twilio().callerId, answerOnBridge: true, timeout: 25, ...recordOpts() });
-  // Optional recording notice played to the person called when they answer (two-party-consent states).
-  if (cfg.twilio().recordingNotice) dial.number({ url: `${api()}/webhooks/twilio/notice` }, to); else dial.number(to);
-  res.type('text/xml').send(vr.toString());
-}));
-
-webhooks.post('/twilio/notice', form, requireTwilioSignature, (_req, res) => {
-  const vr = voiceResponse(); vr.say(cfg.twilio().recordingNotice || 'This call may be recorded.');
-  res.type('text/xml').send(vr.toString());
-});
-
-/** Phone number voice URL: inbound call → ring the number's agent, or the lead's owner, in the browser; otherwise voicemail. */
-webhooks.post('/twilio/inbound', form, requireTwilioSignature, ah(async (req, res) => {
-  const vr = voiceResponse();
-  const from = String(req.body.From ?? ''), to = String(req.body.To ?? '');
-  const lineOwner = await db.query.users.findFirst({ where: and(eq(users.twilioNumber, toE164(to) ?? to), eq(users.active, true)) });
-  const lead = await leadByPhone(from, lineOwner?.agencyId);
-  const agentId = lineOwner?.id ?? lead?.agentId ?? null;
-  const agencyId = lineOwner?.agencyId ?? lead?.agencyId ?? (await defaultAgency());
-  if (agencyId) await notify(db, { agencyId, userId: agentId, kind: 'call', text: `Incoming call from ${lead ? `${lead.firstName} ${lead.lastName}` : from}`, leadId: lead?.id ?? null });
-  if (agentId) {
-    const dial = vr.dial({ answerOnBridge: true, timeout: 20, ...recordOpts(), action: `${api()}/webhooks/twilio/inbound-done` });
-    dial.client(agentId);
-  } else {
-    vr.say('Thanks for calling. Please leave a message after the tone.');
-    vr.record({ maxLength: 120, playBeep: true, recordingStatusCallback: `${api()}/webhooks/twilio/voicemail?from=${encodeURIComponent(from)}`, recordingStatusCallbackEvent: ['completed'] });
-  }
-  res.type('text/xml').send(vr.toString());
-}));
-
-/** After an inbound <Dial>: if nobody answered, take a voicemail. */
-webhooks.post('/twilio/inbound-done', form, requireTwilioSignature, (req, res) => {
-  const vr = voiceResponse();
-  if (req.body.DialCallStatus !== 'completed') {
-    vr.say('Sorry we missed you. Please leave a message after the tone.');
-    vr.record({ maxLength: 120, playBeep: true, recordingStatusCallback: `${api()}/webhooks/twilio/voicemail?from=${encodeURIComponent(String(req.body.From ?? ''))}`, recordingStatusCallbackEvent: ['completed'] });
-  }
-  res.type('text/xml').send(vr.toString());
-});
-
-webhooks.post('/twilio/voicemail', form, requireTwilioSignature, ah(async (req, res) => {
-  const from = String(req.query.from ?? req.body.From ?? '');
-  const lead = await leadByPhone(from);
-  const agencyId = lead?.agencyId ?? (await defaultAgency());
-  if (agencyId) await notify(db, { agencyId, userId: lead?.agentId ?? null, kind: 'call', text: `New voicemail from ${lead ? `${lead.firstName} ${lead.lastName}` : from} (${req.body.RecordingDuration ?? '?'}s)`, leadId: lead?.id ?? null });
-  res.sendStatus(204);
-}));
+webhooks.use('/twilio', callWebhooks);
 
 /** Recording finished → store it and link it to the logged call (matched on CallSid). */
 webhooks.post('/twilio/recording', form, requireTwilioSignature, ah(async (req, res) => {

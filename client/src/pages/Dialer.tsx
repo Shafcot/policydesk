@@ -1,200 +1,130 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError } from '../lib/api';
-import { useMe } from '../lib/auth';
-import { RESULTS, STG, fullName, type CallResult, type Lead, type Stage } from '../lib/domain';
+import { api } from '../lib/api';
+import { useAuth, useMe } from '../lib/auth';
+import { useCalls, useTick } from '../lib/calls';
+import { MAIN_RESULTS, QUOTE_RESULTS, STG, fullName, type Lead } from '../lib/domain';
 import { ago, dur, ftime, pct } from '../lib/format';
-import { usePublicSettings } from '../lib/hooks';
+import { usePublicSettings, type CallScript } from '../lib/hooks';
 import { useOpenLead } from '../lib/leadLink';
-import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
-import { Avatar, Bar, PageHead, StagePill } from '../components/ui';
+import { Avatar, Bar, Modal, PageHead, StagePill } from '../components/ui';
 import { SpeedDial } from '../components/SpeedDial';
-import { useVoice } from '../lib/voice';
-import type { Call } from '@twilio/voice-sdk';
 import { WonModal } from '../components/WonModal';
-import { DialPad, Keypad } from '../components/DialPad';
+import { DialPad } from '../components/DialPad';
 import { NewLeadModal } from '../components/NewLeadModal';
-import { Modal } from '../components/ui';
+import { CallControls, LiveCalls, callName, pretty, stateText } from '../components/CallBar';
 
-type QueueItem = { bucket: 'new' | 'callback' | 'followup' | 'retry'; lead: Lead };
-const BUCKETS: [QueueItem['bucket'], string][] = [['new', 'New leads'], ['callback', 'Requested call-backs'], ['followup', 'Follow-ups due today'], ['retry', 'No-answer retries']];
+const BUCKETS = [['new', 'New leads'], ['callback', 'Requested call-backs'], ['followup', 'Follow-ups due today'], ['retry', 'No-answer retries']] as const;
 const LABEL = { new: 'New lead', callback: 'Call-back', followup: 'Follow-up', retry: 'Retry' };
 
 /**
- * Power dialer. Until Twilio is connected (Milestone 3) the agent dials on their own phone:
- * the app picks the next lead in SOW order, locks it, times the call and logs the result.
+ * Power dialer. Calls go through the browser when Twilio is connected; otherwise the agent dials on their own phone
+ * and the app times the call. The call itself lives in the app-wide call manager (see lib/calls.tsx).
  */
 export function Dialer() {
   const { me, isAdmin } = useMe();
-  const qc = useQueryClient();
-  const toast = useToast();
+  const c = useCalls();
   const openLead = useOpenLead();
   const settings = usePublicSettings();
-  const queue = useQuery({ queryKey: ['queue'], queryFn: () => api<QueueItem[]>('/leads/queue/mine'), refetchInterval: 30_000 });
   const dash = useQuery({ queryKey: ['dashboard'], queryFn: () => api<{ callsToday: number }>('/dashboard') });
-  const [current, setCurrent] = useState<Lead | null>(null);
-  const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [now, setNow] = useState(Date.now());
-  const [note, setNote] = useState('');
-  const [auto, setAuto] = useState(false);
   const [speed, setSpeed] = useState(false);
-  const [won, setWon] = useState<Lead | null>(null);
-  const autoRef = useRef(auto); autoRef.current = auto;
-  const voice = useVoice();
-  const callRef = useRef<Call | null>(null);
-  const [callState, setCallState] = useState<'ringing' | 'connected' | 'ended' | null>(null);
-  const [muted, setMuted] = useState(false);
-  const [endedAt, setEndedAt] = useState<number | null>(null);
-  // Dial pad: a typed number that isn't one of the agent's leads.
   const [pad, setPad] = useState(false);
   const [padErr, setPadErr] = useState('');
-  const [manual, setManual] = useState<{ number: string } | null>(null);
+  const [padBusy, setPadBusy] = useState(false);
   const [saveLead, setSaveLead] = useState(false);
-  const [tones, setTones] = useState(false);
-
-  useEffect(() => { if (!startedAt || endedAt) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [startedAt, endedAt]);
-  const elapsed = startedAt ? ((endedAt ?? now) - startedAt) / 1000 : 0;
-  const busyCall = !!current || !!manual;
-
-  const items = (queue.data ?? []).filter((x) => x.lead.id !== current?.id);
-  const onErr = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Something went wrong', 'alert');
-
-  /** Follows a Twilio call: the timer starts when answered and stops when it ends. */
-  const track = (call: Call) => {
-    callRef.current = call;
-    call.on('accept', () => { setCallState('connected'); setStartedAt(Date.now()); setNow(Date.now()); });
-    const end = () => { setCallState('ended'); setTones(false); setEndedAt((x) => x ?? Date.now()); };
-    call.on('disconnect', end); call.on('cancel', end); call.on('reject', end);
-    call.on('error', (e: { message?: string }) => { end(); toast(`Call error: ${e.message ?? 'unknown'}`, 'alert'); });
-  };
-  const resetCall = () => { setCurrent(null); setManual(null); setStartedAt(null); setEndedAt(null); setCallState(null); setTones(false); callRef.current = null; };
-
-  const begin = useMutation({
-    mutationFn: (l: Lead) => api(`/leads/${l.id}/lock`, { method: 'POST' }).then(() => l),
-    onSuccess: async (l) => {
-      setCurrent(l); setNote(''); setMuted(false); setEndedAt(null);
-      if (!voice.ready) { setStartedAt(Date.now()); setNow(Date.now()); setCallState(null); return; }
-      // Live call through Twilio: the timer starts when the lead answers.
-      setStartedAt(null); setCallState('ringing');
-      try { track(await voice.connect(l.id)); } catch (e) { setCallState('ended'); onErr(e); }
-    },
-    onError: onErr,
-  });
-  const hangUp = () => { callRef.current?.disconnect(); setCallState('ended'); setEndedAt((x) => x ?? Date.now()); };
-
-  // Dial pad → the agent's own lead (normal lead call), someone else's lead (blocked), or a new number.
-  const dialNumber = useMutation({
-    mutationFn: (typed: string) => api<{ valid: boolean; number?: string; lead: Lead | null; blocked?: string }>(`/dialpad/lookup?phone=${encodeURIComponent(typed)}`),
-    onSuccess: async (r) => {
-      if (!r.valid || !r.number) return setPadErr('That phone number isn’t valid.');
-      if (r.blocked) return setPadErr(r.blocked);
-      setPad(false); setPadErr('');
-      if (r.lead) { toast(`That’s ${fullName(r.lead)}, one of your leads`); begin.mutate(r.lead); return; }
-      setManual({ number: r.number }); setNote(''); setMuted(false); setEndedAt(null);
-      if (!voice.ready) { setStartedAt(Date.now()); setNow(Date.now()); setCallState(null); return; }
-      setStartedAt(null); setCallState('ringing');
-      try { track(await voice.connectNumber(r.number)); } catch (e) { setCallState('ended'); onErr(e); }
-    },
-    onError: (e) => setPadErr(e instanceof ApiError ? e.message : 'Could not check that number'),
-  });
-  const finish = useMutation({
-    mutationFn: (result: CallResult) => {
-      const callSid = callRef.current?.parameters?.CallSid;
-      if (callRef.current && callState !== 'ended') callRef.current.disconnect();
-      return api<Lead & { stage: Stage }>(`/leads/${current!.id}/calls`, { method: 'POST', json: { result, durationSec: Math.round(elapsed), notes: note.trim() || undefined, ...(callSid ? { callSid } : {}) } });
-    },
-    onSuccess: (l, result) => {
-      ['queue', 'dashboard', 'leads', 'lead'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-      if (result === 'sold') { setWon(l); setAuto(false); } else toast(`${fullName(l)} → ${STG[l.stage].n}`);
-      resetCall();
-    },
-    onError: onErr,
-  });
-
-  // Power mode: when the previous call is logged, load and start the next lead automatically.
-  useEffect(() => {
-    if (!auto || current || manual || begin.isPending || finish.isPending || !queue.data) return;
-    const next = (queue.data ?? [])[0];
-    if (!next) { setAuto(false); toast('Queue is empty. Unreached numbers return next shift.'); return; }
-    const t = setTimeout(() => { if (autoRef.current) begin.mutate(next.lead); }, 900);
-    return () => clearTimeout(t);
-  }, [auto, current, manual, queue.data, begin, finish.isPending, toast]);
+  const a = c.active;
+  useTick(!!a && !a.endedAt && !!a.startedAt);
 
   // Speed dial from the top bar lands here with ?call=<leadId>.
   const [params, setParams] = useSearchParams();
   const callId = params.get('call');
+  const dialParam = params.get('dial');
   useEffect(() => {
-    if (!callId || current) return;
+    if (!dialParam || a) return;
+    setParams((p) => { p.delete('dial'); return p; }, { replace: true });
+    void c.callNumber(dialParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialParam]);
+  useEffect(() => {
+    if (!callId || a) return;
     setParams((p) => { p.delete('call'); return p; }, { replace: true });
-    api<Lead>(`/leads/${callId}`).then((l) => begin.mutate(l)).catch(onErr);
+    api<Lead>(`/leads/${callId}`).then((l) => c.callLead(l)).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callId]);
 
   const st = settings.data;
   const calls = dash.data?.callsToday ?? 0;
+  const items = c.queue;
+  const dial = async (n: string) => { setPadBusy(true); setPadErr(''); const e = await c.callNumber(n); setPadBusy(false); if (e) setPadErr(e); else setPad(false); };
+  const lead = a?.lead ?? null;
   return (
     <>
       <PageHead title="Dialer" sub="Queue order: new leads → requested call-backs → follow-ups due today → no-answer retries."
         actions={<>
-          <button className="btn" disabled={busyCall} onClick={() => { setPadErr(''); setPad(true); }}><Icon name="phone" className="sm" />Dial pad</button>
+          <button className="btn" disabled={!!a} onClick={() => { setPadErr(''); setPad(true); }}><Icon name="phone" className="sm" />Dial pad</button>
           <button className="btn" onClick={() => setSpeed(true)}><Icon name="grid" className="sm" />Speed dial</button>
         </>} />
       <div className="dialer">
         <div className="stack">
           <section className="panel dial-stage">
-            {manual && !current ? (
-              <ManualCall number={manual.number} state={callState} elapsed={elapsed} muted={muted} tones={tones} live={voice.ready}
-                onHangUp={hangUp} onMute={() => { callRef.current?.mute(!muted); setMuted(!muted); }} onTones={() => setTones(!tones)} onDigit={(d) => callRef.current?.sendDigits(d)}
-                onEndManual={() => { setCallState('ended'); setEndedAt(Date.now()); }} onSave={() => setSaveLead(true)} onDone={resetCall} />
-            ) : !current ? (
+            {!a ? (
               <div className="dial-idle">
                 <div className="ring"><Icon name="phone" /></div>
-                <h2>{auto ? 'Loading next lead…' : 'Power dialer'}</h2>
+                <h2>{c.auto ? 'Loading next lead…' : 'Power dialer'}</h2>
                 <p className="muted" style={{ maxWidth: 440 }}>Loads the next lead, locks it so no one else calls it, and times the call. Pick a result and the next lead loads automatically. Use the dial pad to call any number.</p>
-                {auto
-                  ? <button className="btn lg" onClick={() => setAuto(false)}><Icon name="pause" className="sm" />Pause dialing</button>
-                  : <button className="btn accent lg" disabled={!items.length} onClick={() => setAuto(true)}><Icon name="play" className="sm fill" />Start dialing · {items.length} in queue</button>}
+                {c.auto
+                  ? <button className="btn lg" onClick={() => c.setAuto(false)}><Icon name="pause" className="sm" />Pause dialing</button>
+                  : <button className="btn accent lg" disabled={!items.length} onClick={() => c.setAuto(true)}><Icon name="play" className="sm fill" />Start dialing · {items.length} in queue</button>}
                 {!isAdmin && <div style={{ width: 'min(360px,100%)' }}><div className="row between"><small className="muted">Calls today</small><small className="num">{calls} · min {me.minCallsPerDay} · max {me.maxCallsPerDay}</small></div><Bar value={pct(calls, me.maxCallsPerDay)} /></div>}
+                {c.voiceReady && <small className="help">Calling from {me.twilioNumber ? pretty(me.twilioNumber) : 'the agency’s default number'}</small>}
               </div>
             ) : (
               <>
                 <div className="row between">
-                  <div className="live-lead"><Avatar name={fullName(current)} color={STG[current.stage].c} size="lg" /><div><h2>{fullName(current)}</h2><span className="muted">{current.line} · {current.type === 'commercial' ? 'Commercial' : 'Personal'}{current.company ? ` · ${current.company}` : ''}</span></div></div>
-                  <StagePill stage={current.stage} />
+                  <div className="live-lead">{lead ? <Avatar name={fullName(lead)} color={STG[lead.stage].c} size="lg" /> : <div className="ring sm"><Icon name="phone" /></div>}
+                    <div><h2 className={lead ? '' : 'mono'}>{callName(a)}</h2><span className="muted">{lead ? `${lead.line} · ${lead.type === 'commercial' ? 'Commercial' : 'Personal'}${lead.company ? ` · ${lead.company}` : ''}` : a.direction === 'in' ? 'Incoming call · not a lead yet' : 'Dial pad · not a lead yet'}{a.transferFrom ? ` · transferred by ${a.transferFrom}` : ''}</span></div></div>
+                  {lead && <StagePill stage={lead.stage} />}
                 </div>
                 <div className="row between">
-                  {callState
-                    ? <div className={`call-state ${callState === 'connected' ? 'connected' : ''}`}><span className="pulse" />{{ ringing: 'Ringing…', connected: 'Connected', ended: 'Call ended — pick a result' }[callState]} <span className="mono muted">{current.phone}</span></div>
-                    : <div className="call-state connected"><span className="pulse" />Dial <span className="mono" style={{ fontSize: 20 }}>{current.phone}</span></div>}
-                  <div className="row">{callState === 'connected' && <span className="rec">RECORDING</span>}<span className="call-timer">{dur(elapsed)}</span></div>
+                  {a.state === 'manual'
+                    ? <div className="call-state connected"><span className="pulse" />Dial <a className="mono" style={{ fontSize: 20 }} href={`tel:${a.number}`}>{pretty(a.number)}</a></div>
+                    : <div className={`call-state ${a.state === 'connected' ? 'connected' : ''}`}>{a.state !== 'ended' && <span className="pulse" />}{stateText(a)}{a.state !== 'ended' && <span className="mono muted">{pretty(a.number)}</span>}</div>}
+                  <div className="row">{a.state === 'connected' && a.live && <span className="rec">RECORDING</span>}<span className="call-timer">{dur(c.elapsed())}</span></div>
                 </div>
-                {callState && callState !== 'ended' && <div className="row">
-                  <button className="btn danger" onClick={hangUp}><Icon name="hang" className="sm" />Hang up</button>
-                  <button className="btn" onClick={() => { callRef.current?.mute(!muted); setMuted(!muted); }}>{muted ? 'Unmute' : 'Mute'}</button>
-                  {callState === 'connected' && <button className={`btn ${tones ? 'primary' : ''}`} onClick={() => setTones(!tones)}><Icon name="grid" className="sm" />Keypad</button>}
-                </div>}
-                {tones && callState === 'connected' && <Keypad compact onKey={(d) => callRef.current?.sendDigits(d)} />}
-                {!callState && <p className="help">Browser calling turns on when Twilio is connected. Until then, dial from your phone and log the result here.</p>}
-                <div className="kv">
-                  <div><span>Source</span><b>{current.source}</b></div>
-                  <div><span>Attempt</span><b className="num">{current.attempts + 1} of {st?.maxAttempts ?? '—'}</b></div>
-                  <div><span>Current carrier</span><b>{current.custom.carrier || '—'}</b></div>
-                  <div><span>Last call</span><b>{current.lastAttemptAt ? ago(current.lastAttemptAt) : 'First call'}</b></div>
-                </div>
-                <div className="field"><label htmlFor="call-note">Call notes</label><textarea id="call-note" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Saved to the lead with the call" /></div>
-                <div>
-                  <div className="lbl-sm" style={{ marginBottom: 6 }}>Call result → updates the stage{auto ? ' and loads the next lead' : ''}</div>
-                  <div className="result-grid">{RESULTS.map((r) => <button key={r.k} className="result-btn" style={{ ['--c' as string]: `var(${r.c})` }} disabled={finish.isPending} onClick={() => finish.mutate(r.k)}>{r.n}</button>)}</div>
-                </div>
-                <div className="row">
-                  <button className="btn ghost" onClick={() => openLead(current.id)}>Open lead page</button>
-                  {auto && <button className="btn ghost" onClick={() => setAuto(false)}><Icon name="pause" className="sm" />Pause after this call</button>}
-                </div>
+                <CallControls compact />
+                {a.state === 'manual' && <p className="help">Browser calling turns on when Twilio is connected. Until then, dial from your phone and log the result here.</p>}
+                {lead ? <>
+                  <ScriptPanel lead={lead} first={lead.attempts === 0} scripts={st?.callScripts} />
+                  <div className="kv">
+                    <div><span>Source</span><b>{lead.source}</b></div>
+                    <div><span>Attempt</span><b className="num">{lead.attempts + 1} of {st?.maxAttempts ?? '—'}</b></div>
+                    <div><span>Current carrier</span><b>{lead.custom.carrier || '—'}</b></div>
+                    <div><span>Last call</span><b>{lead.lastAttemptAt ? ago(lead.lastAttemptAt) : 'First call'}</b></div>
+                  </div>
+                  <div className="field"><label htmlFor="call-note">Call notes</label><textarea id="call-note" className="input" value={c.note} onChange={(e) => c.setNote(e.target.value)} placeholder="Saved to the lead with the call" /></div>
+                  <div>
+                    <div className="lbl-sm" style={{ marginBottom: 6 }}>Call result → updates the stage{c.auto ? ' and loads the next lead' : ''}</div>
+                    <div className="result-grid six">{MAIN_RESULTS.map((r) => <button key={r.k} className="result-btn" style={{ ['--c' as string]: `var(${r.c})` }} onClick={() => void c.logResult(r.k)}>{r.n}</button>)}</div>
+                    <div className="row" style={{ marginTop: 6, gap: 6 }}><small className="muted">Quote stage:</small>{QUOTE_RESULTS.map((r) => <button key={r.k} className="btn sm ghost" onClick={() => void c.logResult(r.k)}>{r.n}</button>)}</div>
+                  </div>
+                  <div className="row">
+                    <button className="btn ghost" onClick={() => openLead(lead.id)}>Open lead page</button>
+                    {c.auto && <button className="btn ghost" onClick={() => c.setAuto(false)}><Icon name="pause" className="sm" />Pause after this call</button>}
+                  </div>
+                </> : a.state === 'ended' || a.state === 'manual' ? <>
+                  <p className="help">Save this number as a lead to log the call (and its recording) and follow up. Otherwise the call isn’t saved.</p>
+                  <div className="row">
+                    <button className="btn primary" onClick={() => setSaveLead(true)}><Icon name="userplus" className="sm" />Save as new lead</button>
+                    {a.state === 'ended' && <button className="btn ghost" onClick={c.dismiss}>Done, don’t save</button>}
+                  </div>
+                </> : <ScriptPanel lead={null} first scripts={st?.callScripts} />}
               </>
             )}
           </section>
+          {isAdmin && <LiveCalls />}
+          <Voicemails onCall={(n) => void dial(n)} />
           <section className="panel"><div className="panel-h"><h3>Call schedule</h3></div><div className="panel-b">
             <div className="kv"><div><span>Day 1 attempts</span><b className="num">{st?.attemptsDay1 ?? '—'}</b></div><div><span>Then per day</span><b className="num">{st?.attemptsPerDay ?? '—'}</b></div><div><span>Max attempts before Recycled</span><b className="num">{st?.maxAttempts ?? '—'}</b></div><div><span>Retry gap</span><b className="num">{st ? `${st.retryHours}h` : '—'}</b></div></div>
             <p className="help" style={{ marginTop: 10 }}>Unreached numbers go back in the queue next shift. New leads jump to the front of the queue.</p>
@@ -211,7 +141,7 @@ export function Dialer() {
                   <div key={x.lead.id} className={`q-item ${items[0] === x ? 'next' : ''}`}>
                     <div className="grow" style={{ cursor: 'pointer' }} onClick={() => openLead(x.lead.id)}><b>{fullName(x.lead)}</b><small>{LABEL[x.bucket]}{x.bucket === 'callback' && x.lead.followUpAt ? ` ${ftime(x.lead.followUpAt)}` : ''} · {x.lead.line}</small></div>
                     {items[0] === x && <span className="tag">Next</span>}
-                    <button className="icon-btn call sm" disabled={!!current} onClick={() => begin.mutate(x.lead)} aria-label={`Call ${fullName(x.lead)}`}><Icon name="phone" className="sm" /></button>
+                    <button className="icon-btn call sm" disabled={!!a || c.busy} onClick={() => void c.callLead(x.lead)} aria-label={`Call ${fullName(x.lead)}`}><Icon name="phone" className="sm" /></button>
                   </div>
                 ))}
                 {list.length > 8 && <div className="q-item"><small className="muted">+{list.length - 8} more</small></div>}
@@ -220,52 +150,68 @@ export function Dialer() {
           })}
         </section>
       </div>
+      {speed && <SpeedDial onClose={() => setSpeed(false)} onCall={(l) => { setSpeed(false); if (!a) void c.callLead(l); }} onDial={(n) => { setSpeed(false); if (!a) void dial(n); }} />}
       {pad && <Modal title="Dial pad" onClose={() => setPad(false)}>
-        <DialPad busy={dialNumber.isPending} error={padErr} onCall={(n) => { setPadErr(''); dialNumber.mutate(n); }} callingFrom={voice.ready ? me.twilioNumber ?? null : undefined} />
-        {!voice.ready && <p className="help" style={{ textAlign: 'center', marginTop: 8 }}>Browser calling isn’t connected yet. You’ll dial from your own phone and the call is timed here.</p>}
+        <DialPad busy={padBusy} error={padErr} onCall={(n) => void dial(n)} callingFrom={c.voiceReady ? me.twilioNumber ?? null : undefined} />
+        {!c.voiceReady && <p className="help" style={{ textAlign: 'center', marginTop: 8 }}>Browser calling isn’t connected yet. You’ll dial from your own phone and the call is timed here.</p>}
       </Modal>}
-      {saveLead && manual && <NewLeadModal initial={{ phone: manual.number.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3') }} assignToMe note="The lead is added to your leads. Then pick the call result to log this call."
-        onClose={() => setSaveLead(false)}
-        onCreated={(l) => { setSaveLead(false); setManual(null); setCurrent(l); setCallState((s) => s ?? 'ended'); qc.invalidateQueries({ queryKey: ['queue'] }); }} />}
-      {speed && <SpeedDial onClose={() => setSpeed(false)} onCall={(l) => { setSpeed(false); if (!busyCall) begin.mutate(l); }} />}
-      {won && <WonModal lead={won} onClose={() => setWon(null)} />}
+      {saveLead && a && <NewLeadModal initial={{ phone: pretty(a.number) }} assignToMe note="The lead is added to your leads. Then pick the call result to log this call."
+        onClose={() => setSaveLead(false)} onCreated={(l) => { setSaveLead(false); c.attachLead(l); }} />}
+      {c.won && <WonModal lead={c.won} onClose={c.clearWon} />}
     </>
   );
 }
 
-/** A dial-pad call to a number that isn't a lead yet. */
-function ManualCall({ number, state, elapsed, muted, tones, live, onHangUp, onMute, onTones, onDigit, onEndManual, onSave, onDone }: {
-  number: string; state: 'ringing' | 'connected' | 'ended' | null; elapsed: number; muted: boolean; tones: boolean; live: boolean;
-  onHangUp: () => void; onMute: () => void; onTones: () => void; onDigit: (d: string) => void; onEndManual: () => void; onSave: () => void; onDone: () => void;
-}) {
-  const pretty = number.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3');
-  const ended = state === 'ended';
+const fillScript = (t: string, lead: Lead | null, agent: string, agency: string) =>
+  t.replaceAll('{first}', lead?.firstName ?? 'there').replaceAll('{agent}', agent.split(' ')[0]).replaceAll('{agency}', agency).replaceAll('{line}', lead?.line ?? 'insurance');
+
+/** Opening script + objection answers for the lead's policy type. Open on the first call, collapsed after. */
+function ScriptPanel({ lead, first, scripts }: { lead: Lead | null; first: boolean; scripts?: Record<string, CallScript> }) {
+  const { me } = useMe();
+  const { agency } = useAuth();
+  const [open, setOpen] = useState(first);
+  const [obj, setObj] = useState<number | null>(null);
+  useEffect(() => { setOpen(first); setObj(null); }, [lead?.id, first]);
+  const s = (lead && scripts?.[lead.line]) || scripts?.['*'];
+  if (!s || (!s.opening && !s.objections.length)) return null;
+  const agencyName = agency?.name ?? 'our agency';
   return (
-    <>
-      <div className="row between">
-        <div className="live-lead"><div className="ring sm"><Icon name="phone" /></div><div><h2 className="mono">{pretty}</h2><span className="muted">Dial pad · not a lead yet</span></div></div>
-      </div>
-      <div className="row between">
-        {live || ended
-          ? <div className={`call-state ${state === 'connected' ? 'connected' : ''}`}><span className="pulse" />{{ ringing: 'Ringing…', connected: 'Connected', ended: 'Call ended' }[state ?? 'ended']}</div>
-          : <div className="call-state connected"><span className="pulse" />Dial <a className="mono" style={{ fontSize: 20 }} href={`tel:${number}`}>{pretty}</a> from your phone</div>}
-        <div className="row">{state === 'connected' && <span className="rec">RECORDING</span>}<span className="call-timer">{dur(elapsed)}</span></div>
-      </div>
-      {!ended && <div className="row">
-        {live ? <>
-          <button className="btn danger" onClick={onHangUp}><Icon name="hang" className="sm" />Hang up</button>
-          <button className="btn" onClick={onMute}>{muted ? 'Unmute' : 'Mute'}</button>
-          {state === 'connected' && <button className={`btn ${tones ? 'primary' : ''}`} onClick={onTones}><Icon name="grid" className="sm" />Keypad</button>}
-        </> : <button className="btn danger" onClick={onEndManual}><Icon name="hang" className="sm" />End call</button>}
+    <div className={`script ${open ? 'open' : ''}`}>
+      <button className="script-h" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <Icon name="file" className="sm" /><b>Call script{lead && scripts?.[lead.line] ? ` · ${lead.line}` : ''}</b>{first && <span className="tag">First call</span>}<Icon name="left" className="sm chev" />
+      </button>
+      {open && <div className="script-b">
+        {s.opening && <p className="script-open">{fillScript(s.opening, lead, me.name, agencyName)}</p>}
+        {s.objections.length > 0 && <>
+          <div className="lbl-sm">If they say…</div>
+          <div className="chips">{s.objections.map((o, i) => <button key={i} type="button" className={`chip ${obj === i ? 'on' : ''}`} onClick={() => setObj(obj === i ? null : i)}>{o.q}</button>)}</div>
+          {obj !== null && s.objections[obj] && <p className="script-answer">{fillScript(s.objections[obj].a, lead, me.name, agencyName)}</p>}
+        </>}
       </div>}
-      {tones && state === 'connected' && <Keypad compact onKey={onDigit} />}
-      {ended && <>
-        <p className="help">Save this number as a lead to log the call (and its recording) and follow up. Otherwise the call isn’t saved.</p>
-        <div className="row">
-          <button className="btn primary" onClick={onSave}><Icon name="userplus" className="sm" />Save as new lead</button>
-          <button className="btn ghost" onClick={onDone}>Done, don’t save</button>
+    </div>
+  );
+}
+
+type Voicemail = { id: string; fromNumber: string; leadId: string | null; leadName: string | null; userName: string | null; durationSec: number; heardAt: string | null; createdAt: string; audio: string };
+
+function Voicemails({ onCall }: { onCall: (n: string) => void }) {
+  const qc = useQueryClient();
+  const { isAdmin } = useMe();
+  const q = useQuery({ queryKey: ['voicemails'], queryFn: () => api<Voicemail[]>('/voicemails') });
+  const heard = useMutation({ mutationFn: (id: string) => api(`/voicemails/${id}`, { method: 'PATCH' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['voicemails'] }) });
+  const list = q.data ?? [];
+  if (!list.length) return null;
+  const fresh = list.filter((v) => !v.heardAt).length;
+  return (
+    <section className="panel">
+      <div className="panel-h"><h3>Voicemails</h3>{fresh > 0 && <span className="tag">{fresh} new</span>}</div>
+      <div className="list">{list.slice(0, 6).map((v) => (
+        <div className={`li ${v.heardAt ? '' : 'unread'}`} key={v.id}>
+          <div className="grow"><b>{v.leadName ?? pretty(v.fromNumber)}</b><small>{ago(v.createdAt)} · {dur(v.durationSec)}{isAdmin ? ` · for ${v.userName ?? 'the agency'}` : ''}</small>
+            <audio controls preload="none" src={v.audio} style={{ width: '100%', marginTop: 6 }} onPlay={() => !v.heardAt && heard.mutate(v.id)} /></div>
+          <button className="icon-btn call sm" onClick={() => onCall(v.fromNumber)} aria-label={`Call back ${v.leadName ?? v.fromNumber}`}><Icon name="phone" className="sm" /></button>
         </div>
-      </>}
-    </>
+      ))}</div>
+    </section>
   );
 }

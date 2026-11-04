@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { calls, deviceTokens, leads, users } from '../db/schema.js';
+import { calls, deviceTokens, leads, users, voicemails } from '../db/schema.js';
 import { ah, badRequest, notFound } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { integrationStatus, cfg, enabled, rawSetting, sourceOf } from '../integrations/settings.js';
@@ -64,6 +64,18 @@ mediaRouter.get('/media/recordings/:id', ah(async (req, res) => {
   if (!call?.recordingUrl) return res.sendStatus(404);
   const r = await fetchRecording(call.recordingUrl).catch(() => null);
   if (!r?.ok) return res.status(502).type('text/plain').send('Recording is not available right now');
+  res.setHeader('content-type', 'audio/mpeg');
+  res.setHeader('cache-control', 'private, max-age=3600');
+  res.send(Buffer.from(await r.arrayBuffer()));
+}));
+/** Voicemail audio (signed link, like call recordings). */
+mediaRouter.get('/media/voicemails/:id', ah(async (req, res) => {
+  const path = `/media/voicemails/${req.params.id}`;
+  if (!verifyPath(path, String(req.query.exp ?? ''), String(req.query.sig ?? ''))) return res.sendStatus(403);
+  const vm = await db.query.voicemails.findFirst({ where: eq(voicemails.id, String(req.params.id)) });
+  if (!vm) return res.sendStatus(404);
+  const r = await fetchRecording(vm.recordingUrl).catch(() => null);
+  if (!r?.ok) return res.status(502).type('text/plain').send('Voicemail is not available right now');
   res.setHeader('content-type', 'audio/mpeg');
   res.setHeader('cache-control', 'private, max-age=3600');
   res.send(Buffer.from(await r.arrayBuffer()));

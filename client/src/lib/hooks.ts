@@ -11,7 +11,8 @@ export const useTeam = () => useQuery({
   staleTime: 60_000,
 });
 
-export type PublicSettings = { attemptsDay1: number; attemptsPerDay: number; maxAttempts: number; retryHours: number; reminderMinutes: number; customFields: { key: string; label: string; type: 'text' | 'number' | 'date' }[]; teamTargetVisible: boolean; businessOpen: string; businessClose: string; businessDays: string[] };
+export type PublicSettings = { attemptsDay1: number; attemptsPerDay: number; maxAttempts: number; retryHours: number; reminderMinutes: number; customFields: { key: string; label: string; type: 'text' | 'number' | 'date' }[]; teamTargetVisible: boolean; agentTargetsVisible: boolean; targetStartDay: number; businessOpen: string; businessClose: string; businessDays: string[]; callScripts: Record<string, CallScript>; carriers: string[] };
+export type CallScript = { opening: string; objections: { q: string; a: string }[] };
 export const usePublicSettings = () => useQuery({ queryKey: ['settings-public'], queryFn: () => api<PublicSettings>('/settings/public'), staleTime: 5 * 60_000 });
 
 export type Template = { id: string; channel: 'sms' | 'email'; name: string; subject: string | null; body: string };

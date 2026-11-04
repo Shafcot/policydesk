@@ -11,7 +11,8 @@ import { Avatar, colorFor } from './ui';
 import { LeadDrawer } from './LeadDrawer';
 import { useTeam } from '../lib/hooks';
 import { useLiveUpdates } from '../lib/live';
-import { VoiceProvider, useVoice } from '../lib/voice';
+import { CallProvider } from '../lib/calls';
+import { CallBar, IncomingCall } from './CallBar';
 import { enablePush, loadPushConfig, pushAvailable } from '../lib/push';
 import { NewLeadModal } from './NewLeadModal';
 import { SpeedDial } from './SpeedDial';
@@ -53,7 +54,7 @@ export function Shell() {
   useEffect(() => setOpen(false), [loc.pathname]);
   const brand = agency?.brandName ?? 'Policy-desk CRM';
   return (
-    <VoiceProvider>
+    <CallProvider>
     <div id="app">
       <aside id="side" className={open ? 'open' : ''} aria-label="Main navigation">
         <div className="brand"><div className="brand-mark">{brand[0]}</div><div><b>{brand}</b><small>{agency?.name}</small></div></div>
@@ -79,21 +80,9 @@ export function Shell() {
       </div>
       <LeadDrawer />
       <IncomingCall />
+      <CallBar />
     </div>
-    </VoiceProvider>
-  );
-}
-
-/** Banner for an inbound call ringing in the browser (Twilio). */
-function IncomingCall() {
-  const v = useVoice();
-  if (!v.incoming) return null;
-  return (
-    <div className="reminder" role="alertdialog" aria-label="Incoming call">
-      <span className="eyebrow" style={{ color: 'var(--accent)' }}><Icon name="phone" className="sm" /> Incoming call</span>
-      <h3>{v.incoming.from}</h3>
-      <div className="row"><button className="btn primary" onClick={v.answer}><Icon name="phone" className="sm" />Answer</button><button className="btn danger" onClick={v.decline}>Decline</button></div>
-    </div>
+    </CallProvider>
   );
 }
 

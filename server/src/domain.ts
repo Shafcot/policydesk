@@ -15,16 +15,16 @@ export const STAGE_LABELS: Record<Stage, string> = {
   recycled: 'Recycled',
 };
 
-export const CALL_RESULTS = ['no_answer', 'left_msg', 'voicemail', 'call_back', 'needs_quote', 'quoted', 'sold', 'lost'] as const;
+export const CALL_RESULTS = ['no_answer', 'voicemail', 'sent_text', 'call_back', 'needs_quote', 'quoted', 'sold', 'lost'] as const;
 export type CallResult = (typeof CALL_RESULTS)[number];
 
 /** Results where the lead was not actually reached. */
-export const NOT_REACHED: readonly CallResult[] = ['no_answer', 'left_msg', 'voicemail'];
+export const NOT_REACHED: readonly CallResult[] = ['no_answer', 'voicemail', 'sent_text'];
 
 /** SOW section 6: call result → pipeline stage. */
 export const RESULT_STAGE: Record<CallResult, Stage> = {
   no_answer: 'attempted',
-  left_msg: 'attempted',
+  sent_text: 'attempted',
   voicemail: 'attempted',
   call_back: 'followup',
   needs_quote: 'ready',
@@ -57,7 +57,12 @@ export type AgencySettings = {
   autoRequote: boolean;
   autoRecycle: boolean;
   teamTarget: number;
+  /** Legacy (agents now always see the team target). */
   teamTargetVisible: boolean;
+  /** Agents can see other agents' individual targets. Agents always see their own and the team target. */
+  agentTargetsVisible: boolean;
+  /** Day of the month the agency's target month starts (e.g. 20 → Sept 20 – Oct 19). */
+  targetStartDay: number;
   businessDays: string[];
   businessOpen: string;
   businessClose: string;
@@ -68,6 +73,31 @@ export type AgencySettings = {
   reminderMinutes: number;
   /** Speed-to-lead screening questions used by the AI reply (SOW 4). */
   screeningQuestions: string[];
+  /** Carriers offered when recording a policy. */
+  carriers: string[];
+  /** Call scripts shown in the call screen. Key "*" = all policy types; otherwise a line of insurance. */
+  callScripts: Record<string, CallScript>;
+  /** Main number phone menu (IVR). */
+  phoneMenu: PhoneMenu;
+  /** Text sent to callers whose call was missed or came after hours ({booking} = booking link). */
+  missedCallText: string;
+  missedCallTextOn: boolean;
+  /** When a lead replies, the AI holds the conversation and books them into the agent's calendar. */
+  aiConversations: boolean;
+  aiMaxTurns: number;
+};
+
+export type CallScript = { opening: string; objections: { q: string; a: string }[] };
+export type PhoneMenuOption = { digit: string; label: string; userIds: string[] };
+export type PhoneMenu = {
+  enabled: boolean;
+  /** E.164 main agency number (from Phone numbers). */
+  mainNumber: string;
+  greeting: string;
+  options: PhoneMenuOption[];
+  /** Caller presses nothing: ring these users (empty = any available agent). */
+  defaultUserIds: string[];
+  afterHoursMessage: string;
 };
 
 export const DEFAULT_SETTINGS: AgencySettings = {
@@ -96,6 +126,32 @@ export const DEFAULT_SETTINGS: AgencySettings = {
   ],
   reminderMinutes: 10,
   screeningQuestions: ['What ZIP code is the property or vehicle in?', 'Who insures you now?', 'When does your current policy renew?'],
+  agentTargetsVisible: false,
+  targetStartDay: 1,
+  carriers: [],
+  callScripts: {
+    '*': {
+      opening: 'Hi {first}, this is {agent} with {agency}. You asked for a {line} insurance quote, and I can get you a few options in about five minutes. Is now still a good time?',
+      objections: [
+        { q: 'I’m happy with my current carrier.', a: 'That’s great to hear. Most of my clients were too. It takes five minutes to compare, and if we can’t beat your coverage and price, you keep what you have. Who are you with right now?' },
+        { q: 'Just send me something by email.', a: 'Happy to. To make sure the numbers are accurate, I need two or three details first. It’ll take about two minutes. What’s the ZIP code?' },
+        { q: 'It’s too expensive.', a: 'Understood. Let’s look at deductibles and discounts together. Bundling and paperless often bring the price down. What monthly price were you hoping for?' },
+        { q: 'I need to talk to my spouse.', a: 'Of course. Would it help if I booked a quick call when you’re both available? What time works best?' },
+      ],
+    },
+  },
+  phoneMenu: {
+    enabled: false,
+    mainNumber: '',
+    greeting: 'Thanks for calling {agency}.',
+    options: [],
+    defaultUserIds: [],
+    afterHoursMessage: 'Thanks for calling {agency}. We’re closed right now. Please leave a message and we’ll call you back, or book a time with the link we’re texting you.',
+  },
+  missedCallText: 'Hi, this is {agency}. Sorry we missed your call! Book a time that suits you here: {booking}. Reply STOP to opt out.',
+  missedCallTextOn: true,
+  aiConversations: true,
+  aiMaxTurns: 8,
 };
 
 export const CARRIERS = ['Progressive', 'Travelers', 'Safeco', 'Nationwide', 'The Hartford', 'Liberty Mutual', 'Hiscox'] as const;

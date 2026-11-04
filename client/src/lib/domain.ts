@@ -8,10 +8,12 @@ export type Stage = (typeof STAGES)[number]['k'];
 export const STG = Object.fromEntries(STAGES.map((s) => [s.k, s])) as Record<Stage, (typeof STAGES)[number]>;
 
 export const RESULTS = [
-  { k: 'no_answer', n: 'No answer', c: '--s9' }, { k: 'left_msg', n: 'Left message', c: '--s9' }, { k: 'voicemail', n: 'Voicemail', c: '--s2' },
-  { k: 'call_back', n: 'Call back', c: '--s3' }, { k: 'needs_quote', n: 'Needs quote', c: '--s4' }, { k: 'quoted', n: 'Quoted', c: '--s5' },
-  { k: 'sold', n: 'Sold', c: '--s6' }, { k: 'lost', n: 'Lost', c: '--s7' },
+  { k: 'no_answer', n: 'No answer', c: '--s9', main: true }, { k: 'voicemail', n: 'Voicemail', c: '--s2', main: true }, { k: 'sent_text', n: 'Sent text message', c: '--s9', main: true },
+  { k: 'call_back', n: 'Call back', c: '--s3', main: true }, { k: 'sold', n: 'Sold', c: '--s6', main: true }, { k: 'lost', n: 'Lost', c: '--s7', main: true },
+  { k: 'needs_quote', n: 'Needs quote', c: '--s4', main: false }, { k: 'quoted', n: 'Quoted', c: '--s5', main: false },
 ] as const;
+export const MAIN_RESULTS = RESULTS.filter((r) => r.main);
+export const QUOTE_RESULTS = RESULTS.filter((r) => !r.main);
 export type CallResult = (typeof RESULTS)[number]['k'];
 export const RES = Object.fromEntries(RESULTS.map((r) => [r.k, r])) as Record<CallResult, (typeof RESULTS)[number]>;
 

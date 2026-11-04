@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { appointments, calls, customers, leads, messages, notes, policies, users } from '../db/schema.js';
+import { appointments, calls, customers, leads, liveCalls, messages, notes, policies, users } from '../db/schema.js';
 import { CALL_RESULTS, LINES, STAGES, lineType } from '../domain.js';
 import { ah, badRequest, forbidden } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
@@ -173,7 +173,13 @@ leadsRouter.post('/bulk', requireAdmin, ah<AuthedRequest>(async (req, res) => {
 leadsRouter.post('/:id/calls', ah<AuthedRequest>(async (req, res) => {
   const lead = await getVisibleLead(req.user, String(req.params.id));
   assertCanCall(req.user, lead);
-  const body = z.object({ result: z.enum(CALL_RESULTS), durationSec: z.number().int().min(0).max(36000).optional(), notes: z.string().max(5000).optional(), callSid: z.string().regex(/^CA[0-9a-f]{32}$/).optional() }).parse(req.body);
+  const body = z.object({ result: z.enum(CALL_RESULTS), durationSec: z.number().int().min(0).max(36000).optional(), notes: z.string().max(5000).optional(), callSid: z.string().regex(/^CA[0-9a-f]{32}$/).optional(), liveCallId: z.string().uuid().optional() }).parse(req.body);
+  // A browser call: the recording is filed under the call's first leg, whoever ends up logging it.
+  if (body.liveCallId) {
+    const lc = await db.query.liveCalls.findFirst({ where: and(eq(liveCalls.id, body.liveCallId), eq(liveCalls.agencyId, req.user.agencyId)) });
+    if (lc?.logCallSid) body.callSid = lc.logCallSid;
+    if (lc && !lc.leadId) await db.update(liveCalls).set({ leadId: lead.id }).where(eq(liveCalls.id, lc.id));
+  }
   const updated = await recordCall(lead, req.user, body);
   if (body.callSid) await attachRecording(body.callSid); // the recording may have arrived first
   res.status(201).json(updated);

@@ -60,6 +60,8 @@ export const users = pgTable('users', {
   notifyByEmail: boolean('notify_by_email').notNull().default(true),
   /** Agent's Twilio number (E.164). Used as caller ID and to route inbound calls. */
   twilioNumber: varchar('twilio_number', { length: 20 }),
+  /** Outlook / Microsoft 365 mailbox for calendar sync (defaults to the sign-in email). */
+  calendarEmail: varchar('calendar_email', { length: 200 }),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
 }, (t) => [index('users_agency_idx').on(t.agencyId)]);
@@ -99,6 +101,9 @@ export const leads = pgTable('leads', {
   automation: varchar('automation', { length: 120 }),
   /** Live-call lock: set while a user is on a call with this lead. */
   lockedById: uuid('locked_by_id').references(() => users.id, { onDelete: 'set null' }),
+  /** AI texting conversation: null = none, 'active' = AI is replying, 'booked' | 'handoff' | 'stopped' = finished. */
+  aiStatus: varchar('ai_status', { length: 12 }),
+  aiTurns: integer('ai_turns').notNull().default(0),
   custom: jsonb('custom').$type<Record<string, string>>().notNull().default({}),
   createdAt: createdAt(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
@@ -161,6 +166,10 @@ export const appointments = pgTable('appointments', {
   type: varchar('type', { length: 40 }).notNull(),
   status: apptStatusEnum('status').notNull().default('scheduled'),
   remindedAt: ts('reminded_at'),
+  /** Outlook / Microsoft 365 event created for this appointment. */
+  outlookEventId: varchar('outlook_event_id', { length: 400 }),
+  outlookSyncedAt: ts('outlook_synced_at'),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
   createdAt: createdAt(),
 }, (t) => [index('appointments_user_starts_idx').on(t.userId, t.startsAt)]);
 
@@ -274,6 +283,57 @@ export const phoneNumbers = pgTable('phone_numbers', {
   twilioSid: varchar('twilio_sid', { length: 64 }),
   createdAt: createdAt(),
 }, (t) => [index('phone_numbers_user_idx').on(t.userId)]);
+
+/**
+ * Calls in progress. Every call runs as a Twilio conference ("room") so an admin can listen in
+ * and an agent can transfer it. Rows stay after the call ends for routing history.
+ */
+export const liveCalls = pgTable('live_calls', {
+  id: id(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  direction: varchar('direction', { length: 3 }).notNull(), // 'out' | 'in'
+  status: varchar('status', { length: 12 }).notNull().default('ringing'), // ringing | active | ended
+  agentId: uuid('agent_id').references(() => users.id, { onDelete: 'set null' }),
+  /** The agent's browser leg. */
+  agentCallSid: varchar('agent_call_sid', { length: 64 }),
+  /** CallSid the call result is logged under (the first agent's leg); recordings attach to it. */
+  logCallSid: varchar('log_call_sid', { length: 64 }),
+  customerCallSid: varchar('customer_call_sid', { length: 64 }),
+  customerNumber: varchar('customer_number', { length: 20 }).notNull(),
+  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'set null' }),
+  conferenceSid: varchar('conference_sid', { length: 64 }),
+  /** Transfer in progress: target leg, mode and label. */
+  transfer: jsonb('transfer').$type<{ mode: 'warm' | 'blind'; callSid?: string; userId?: string | null; number?: string | null; label: string; state: 'ringing' | 'joined' | 'handoff' | 'failed' } | null>(),
+  answeredAt: ts('answered_at'),
+  endedAt: ts('ended_at'),
+  endReason: varchar('end_reason', { length: 40 }),
+  createdAt: createdAt(),
+}, (t) => [index('live_calls_agency_status_idx').on(t.agencyId, t.status), index('live_calls_agent_sid_idx').on(t.agentCallSid)]);
+
+/** Voicemails left for an agent (or the agency when nobody was routed). */
+export const voicemails = pgTable('voicemails', {
+  id: id(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'set null' }),
+  fromNumber: varchar('from_number', { length: 20 }).notNull(),
+  recordingUrl: text('recording_url').notNull(),
+  durationSec: integer('duration_sec').notNull().default(0),
+  heardAt: ts('heard_at'),
+  createdAt: createdAt(),
+}, (t) => [index('voicemails_user_idx').on(t.userId, t.createdAt)]);
+
+/** Speed-dial contacts that aren't leads (carrier service lines, underwriters…). Shared ones show for everyone. */
+export const speedDialContacts = pgTable('speed_dial_contacts', {
+  id: id(),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 120 }).notNull(),
+  phone: varchar('phone', { length: 20 }).notNull(),
+  note: varchar('note', { length: 200 }),
+  shared: boolean('shared').notNull().default(false),
+  createdAt: createdAt(),
+});
 
 /** Browser push (Firebase Cloud Messaging) registrations. */
 export const deviceTokens = pgTable('device_tokens', {

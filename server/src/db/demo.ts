@@ -31,7 +31,7 @@ const phone = () => `(${pick(['512', '737', '210', '469', '214'])}) 555-0${rint(
 const SUMMARY: Record<CallResult, (f: string, line: string) => string> = {
   no_answer: () => 'No answer. Lead re-queued for the next retry window.',
   voicemail: () => 'Reached voicemail. Left callback number and reason for call.',
-  left_msg: (f) => `Spoke with a household member. Message left for ${f}.`,
+  sent_text: (f) => `No answer. Sent ${f} a text asking for a good time to call back.`,
   call_back: (f, l) => `${f} asked for a call-back tomorrow at 10 AM. Interested in ${l}.`,
   needs_quote: (_f, l) => `Rate increase with current carrier. Gathered details; ready to quote ${l}.`,
   quoted: (_f, l) => `Quoted ${l}. Lead reviewing with household; follow up in two days.`,
@@ -81,7 +81,7 @@ export async function seedDemo() {
       const span = Math.max(ageDays, 0.3) * DAY;
       for (let k = 0; k < attempts; k++) {
         const t = new Date(created.getTime() + ((k + 1) * span) / (attempts + 1));
-        const result = k < attempts - 1 ? pick(['no_answer', 'voicemail', 'left_msg'] as const) : stage === 'attempted' ? pick(NOT_REACHED) : finalResult[stage];
+        const result = k < attempts - 1 ? pick(['no_answer', 'voicemail', 'sent_text'] as const) : stage === 'attempted' ? pick(NOT_REACHED) : finalResult[stage];
         const reached = !NOT_REACHED.includes(result);
         callRows.push({ startedAt: t, result, userId: agent?.id ?? maya.id, durationSec: reached ? rint(140, 760) : rint(18, 42), summary: SUMMARY[result](first, line), leadId: '' });
       }
