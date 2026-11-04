@@ -512,11 +512,11 @@ details.transcript summary{cursor:pointer;font-size:12.5px;font-weight:600;color
 .ring.sm svg{width:20px;height:20px}
 
 /* call screen: segmented choice, scripts, six results */
-.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.seg button{all:unset;box-sizing:border-box;cursor:pointer;display:grid;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
-.seg button small{color:var(--muted);font-size:12px}
-.seg button.on{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 8%,var(--surface))}
-.seg button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.choice2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.choice2 button{all:unset;box-sizing:border-box;cursor:pointer;display:grid;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.choice2 button small{color:var(--muted);font-size:12px}
+.choice2 button.on{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 8%,var(--surface))}
+.choice2 button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .result-grid.six{grid-template-columns:repeat(3,minmax(0,1fr))}
 .result-grid.six .result-btn{padding:11px 6px;font-size:13.5px}
 .script{border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--info) 5%,var(--surface))}
@@ -532,3 +532,15 @@ details.transcript summary{cursor:pointer;font-size:12.5px;font-weight:600;color
 @media (max-width:700px){#callbar .cb .row.between{flex-wrap:wrap}}
 .icon-btn.danger-icon{color:var(--bad)}
 .icon-btn.danger-icon:hover{background:color-mix(in srgb,var(--bad) 12%,var(--surface))}
+
+/* settings: scripts, carriers, phone menu */
+.objection{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) auto;gap:8px;align-items:start}
+@media (max-width:700px){.objection{grid-template-columns:1fr auto}.objection textarea{grid-column:1/2}}
+.chip-x{all:unset;cursor:pointer;margin-left:6px;font-weight:700;opacity:.7}
+.chip-x:hover{opacity:1}
+.chip-x:focus-visible{outline:2px solid var(--brand);border-radius:4px}
+.menu-opt{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
+.key-badge{display:inline-grid;place-items:center;min-width:32px;height:32px;border-radius:8px;background:var(--brand);color:var(--on-brand);font-weight:700;font-family:var(--f-mono)}
+
+.owner-note.ai-note{background:color-mix(in srgb,var(--info) 9%,var(--surface));color:var(--ink)}
+.owner-note.ai-note .btn{margin-left:auto}

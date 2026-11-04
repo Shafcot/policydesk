@@ -8,23 +8,23 @@ import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
 import { Loading, Modal, PageHead, Pill } from '../components/ui';
 
-type Trigger = 'new_lead' | 'stage_change' | 'call_result' | 'missed_appointment' | 'policy_won' | 'renewal_date' | 'birthday';
+type Trigger = 'new_lead' | 'stage_change' | 'call_result' | 'missed_appointment' | 'policy_won' | 'renewal_date' | 'birthday' | 'inactive';
 type Action = 'send_sms' | 'send_email' | 'create_task' | 'change_stage' | 'assign_agent' | 'send_booking_link' | 'send_review_request' | 'ai_reply' | 'alert_team';
-type Condition = 'no_agent_available' | 'not_replied' | 'is_commercial' | 'is_personal';
+type Condition = 'no_agent_available' | 'not_replied' | 'not_reached' | 'is_commercial' | 'is_personal';
 type Step =
   | { type: 'wait'; amount: number; unit: 'minutes' | 'hours' | 'days' | 'weeks' | 'months' }
   | { type: 'condition'; condition: Condition }
   | { type: 'action'; action: Action; templateId?: string | null; stage?: Stage; text?: string };
 type Automation = {
-  id: string; name: string; active: boolean; trigger: Trigger; triggerConfig: { stages?: Stage[]; results?: CallResult[]; daysBefore?: number[] };
+  id: string; name: string; active: boolean; trigger: Trigger; triggerConfig: { stages?: Stage[]; results?: CallResult[]; daysBefore?: number[]; days?: number };
   steps: Step[]; stopOnReply: boolean; stopOnBooking: boolean; stopOnWonLost: boolean; businessHoursOnly: boolean;
   stats?: { active: number; completed: number; stopped: number };
 };
 type Run = { id: string; contact: string; status: 'active' | 'completed' | 'stopped'; stepIndex: number; nextRunAt: string; stopReason: string | null; updatedAt: string; log: { at: string; text: string }[] };
 
-const TRIGGERS: [Trigger, string][] = [['new_lead', 'New lead'], ['stage_change', 'Stage change'], ['call_result', 'Call result'], ['missed_appointment', 'Missed appointment'], ['policy_won', 'Policy won'], ['renewal_date', 'Renewal date'], ['birthday', 'Birthday']];
+const TRIGGERS: [Trigger, string][] = [['new_lead', 'New lead'], ['stage_change', 'Stage change'], ['call_result', 'Call result'], ['missed_appointment', 'Missed appointment'], ['policy_won', 'Policy won'], ['renewal_date', 'Renewal date'], ['birthday', 'Birthday'], ['inactive', 'No contact for a while']];
 const ACTIONS: [Action, string][] = [['send_sms', 'Send SMS'], ['send_email', 'Send email'], ['create_task', 'Create agent task'], ['change_stage', 'Change stage'], ['assign_agent', 'Assign agent'], ['send_booking_link', 'Send booking link'], ['send_review_request', 'Send review request'], ['ai_reply', 'AI reply + screening questions'], ['alert_team', 'Alert agent & admin']];
-const CONDITIONS: [Condition, string][] = [['no_agent_available', 'No agent is available'], ['not_replied', 'Lead has not replied'], ['is_commercial', 'Lead is commercial'], ['is_personal', 'Lead is personal']];
+const CONDITIONS: [Condition, string][] = [['no_agent_available', 'No agent is available'], ['not_replied', 'Lead has not replied'], ['not_reached', 'Lead not reached yet'], ['is_commercial', 'Lead is commercial'], ['is_personal', 'Lead is personal']];
 const TLABEL = Object.fromEntries(TRIGGERS) as Record<Trigger, string>;
 const MSG_ACTIONS: Action[] = ['send_sms', 'send_email', 'send_booking_link', 'send_review_request'];
 
@@ -99,6 +99,7 @@ export function Automations() {
                   <select className="input" value={d.trigger} onChange={(e) => setDraft({ ...d, trigger: e.target.value as Trigger, triggerConfig: {} })} aria-label="Trigger">{TRIGGERS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select>
                   {d.trigger === 'stage_change' && <select className="input" value={d.triggerConfig.stages?.[0] ?? ''} onChange={(e) => setDraft({ ...d, triggerConfig: { stages: e.target.value ? [e.target.value as Stage] : [] } })} aria-label="Stage"><option value="">Any stage</option>{STAGES.map((s) => <option key={s.k} value={s.k}>Enters {s.n}</option>)}</select>}
                   {d.trigger === 'call_result' && <select className="input" value={d.triggerConfig.results?.[0] ?? ''} onChange={(e) => setDraft({ ...d, triggerConfig: { results: e.target.value ? [e.target.value as CallResult] : [] } })} aria-label="Result"><option value="">Any result</option>{RESULTS.map((r) => <option key={r.k} value={r.k}>{r.n}</option>)}</select>}
+                  {d.trigger === 'inactive' && <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}><input className="input num" type="number" min={1} max={365} style={{ width: 80 }} value={d.triggerConfig.days ?? 45} onChange={(e) => setDraft({ ...d, triggerConfig: { days: Math.max(1, Number(e.target.value) || 45) } })} aria-label="Days without contact" /><small className="muted">days without contact</small></span>}
                   {d.trigger === 'renewal_date' && <input className="input" value={(d.triggerConfig.daysBefore ?? []).join(', ')} placeholder="Days before, e.g. 60, 30" onChange={(e) => setDraft({ ...d, triggerConfig: { daysBefore: e.target.value.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => !Number.isNaN(n)) } })} aria-label="Days before renewal" />}
                 </div>
                 {d.steps.map((s, i) => (

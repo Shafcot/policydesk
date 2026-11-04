@@ -1,6 +1,6 @@
 // Live calls (admin monitoring), transfers, voicemails and speed-dial contacts.
 import { Router } from 'express';
-import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { leads, liveCalls, speedDialContacts, users, voicemails } from '../db/schema.js';
@@ -17,7 +17,7 @@ export const callsRouter = Router();
 callsRouter.get('/calls/live', requireAdmin, ah<AuthedRequest>(async (req, res) => {
   const rows = await db.select({ c: liveCalls, agentName: users.name, firstName: leads.firstName, lastName: leads.lastName })
     .from(liveCalls).leftJoin(users, eq(liveCalls.agentId, users.id)).leftJoin(leads, eq(liveCalls.leadId, leads.id))
-    .where(and(eq(liveCalls.agencyId, req.user.agencyId), inArray(liveCalls.status, ['ringing', 'active']))).orderBy(liveCalls.createdAt);
+    .where(and(eq(liveCalls.agencyId, req.user.agencyId), inArray(liveCalls.status, ['ringing', 'active']), gt(liveCalls.createdAt, new Date(Date.now() - 4 * 3600_000)))).orderBy(liveCalls.createdAt);
   res.json({ voice: enabled.voice(), calls: rows.map(({ c, agentName, firstName, lastName }) => ({
     id: c.id, direction: c.direction, status: c.status, agentId: c.agentId, agentName, leadId: c.leadId,
     leadName: firstName ? `${firstName} ${lastName}` : null, number: c.customerNumber, answeredAt: c.answeredAt, createdAt: c.createdAt,

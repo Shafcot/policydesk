@@ -103,6 +103,9 @@ export async function tick() {
     await processDueRuns();
     await deliverQueued();
     await syncOutlook().catch((e) => console.error('Outlook sync failed', e));
+    // Calls whose end Twilio never reported (lost webhook): close them after 4 hours and free the agent.
+    await db.execute(sql`update live_calls set status = 'ended', ended_at = now(), end_reason = coalesce(end_reason, 'stale') where status in ('ringing', 'active') and created_at < now() - interval '4 hours'`);
+    await db.execute(sql`update users set status = 'available' where status = 'oncall' and not exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.status in ('ringing', 'active')) and exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.end_reason = 'stale' and lc.ended_at > now() - interval '5 minutes')`);
     await reminders();
     const due = await db.query.campaigns.findMany({ where: and(eq(campaigns.kind, 'broadcast'), isNull(campaigns.sentAt), lte(campaigns.scheduledFor, new Date())) });
     for (const c of due) {

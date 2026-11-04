@@ -93,6 +93,12 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
       </div>
       <div className="drawer-b">
         {l.optOut && <div className="optout"><Icon name="alert" className="sm" />Opted out (replied STOP). Removed from all SMS, email and automations.</div>}
+        {l.aiStatus && !l.optOut && <div className="owner-note ai-note"><Icon name="bot" className="sm" />
+          <span>{{ active: `The AI is texting ${l.firstName} (${l.aiTurns} ${l.aiTurns === 1 ? 'reply' : 'replies'}) and will try to book a call.`, booked: 'The AI booked a call with this lead.', handoff: 'The AI handed this conversation to the agent.', stopped: 'AI replies are off for this lead.' }[l.aiStatus]}</span>
+          {canCall && (l.aiStatus === 'active'
+            ? <button className="btn sm" onClick={() => patch.mutate({ aiStatus: 'stopped' })}>Take over</button>
+            : <button className="btn sm ghost" onClick={() => patch.mutate({ aiStatus: null })}>Let the AI reply again</button>)}
+        </div>}
         {flags.length > 0 && <div className="owner-note" style={{ color: 'var(--warn)' }}><Icon name="flag" className="sm" /><span>{flags.join(' · ')}</span></div>}
 
         <section className="panel"><div className="panel-h"><h3>Log call result</h3><small className="muted">Updates the stage automatically</small></div>

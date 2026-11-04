@@ -59,7 +59,7 @@ export function TransferModal({ onClose }: { onClose: () => void }) {
   const order = { available: 0, oncall: 1, offline: 2 } as Record<string, number>;
   return (
     <Modal title="Transfer call" onClose={onClose}>
-      <div className="seg" role="radiogroup" aria-label="Transfer type">
+      <div className="choice2" role="radiogroup" aria-label="Transfer type">
         <button role="radio" aria-checked={mode === 'warm'} className={mode === 'warm' ? 'on' : ''} onClick={() => setMode('warm')}><b>Warm</b><small>You stay on the line and introduce them</small></button>
         <button role="radio" aria-checked={mode === 'blind'} className={mode === 'blind' ? 'on' : ''} onClick={() => setMode('blind')}><b>Blind</b><small>Transfer and drop off right away</small></button>
       </div>

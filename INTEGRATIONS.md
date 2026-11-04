@@ -30,6 +30,21 @@ Agents can also call any number from the **Dial pad** in the Power Dialer. If th
 
 Every call is recorded (dual channel). The recording is attached to the logged call and transcribed if OpenAI is connected.
 
+**How calls work:** every call runs as a Twilio conference, so the Super Admin can **Listen** (muted) or **Whisper** (only the agent hears) from Dashboard → Live calls, and agents can **Transfer** a connected call. Warm transfer means they stay on the line; blind means they drop off. A transfer can go to another agent (their browser rings) or to any number.
+
+**Main number and phone menu:** in **Settings → Phone menu**:
+1. Pick the main number and write the greeting.
+2. Add options ("Press 1 for …") and choose who answers each one. The first available person rings; anyone on a call or offline is skipped.
+3. If nobody answers, the caller leaves a voicemail for that agent. It appears on their Dialer page and in notifications.
+4. Outside business hours callers hear the after-hours message and leave a voicemail.
+5. Missed and after-hours callers get a text with the booking link.
+6. Point the main number's "A call comes in" to `https://<app>/webhooks/twilio/inbound`. Buying or importing the number does this for you.
+
+**Spam-likely protection** is on the **Phone numbers** page:
+1. Register every number in Twilio Trust Hub: business profile, SHAKEN/STIR, CNAM caller name and Voice Integrity. The page shows the status of each.
+2. Register the numbers for free at freecallerregistry.com.
+3. Watch each number's answer rate. The page flags numbers that look labelled.
+
 ## 2. SendGrid — email
 
 1. Create an API key with Mail Send permission → `SENDGRID_API_KEY`.
@@ -41,7 +56,14 @@ Every call is recorded (dual channel). The recording is attached to the logged c
 
 Every email to a lead includes an unsubscribe link. Clicking it opts the lead out of everything.
 
-## 3. OpenAI — transcripts, summaries, AI replies
+## 3. OpenAI — transcripts, summaries, AI texting
+
+With OpenAI connected:
+- When a lead texts or emails back, the AI answers, offers the agent's real free times and books the time the lead picks.
+- It hands over to the agent when the lead asks for a person, after the reply limit, or as soon as the agent replies by hand.
+- Turn it on or off and set the limit in **Settings → AI texting**.
+- AI is not used for voice calls.
+
 
 Set `OPENAI_API_KEY`. The models can be changed with `OPENAI_TRANSCRIBE_MODEL` and `OPENAI_CHAT_MODEL`. Edit the speed-to-lead screening questions in Settings → Integrations.
 
@@ -63,6 +85,15 @@ Set `OPENAI_API_KEY`. The models can be changed with `OPENAI_TRANSCRIBE_MODEL` a
 ## 6. Google Ads lead forms
 
 In each lead form asset, open Lead delivery → Webhook. Set the URL to `https://<app>/webhooks/google-ads` and the key to a secret → `GOOGLE_ADS_WEBHOOK_KEY`. Use "Send test data" to check it; test leads are acknowledged but not saved.
+
+## 6b. Outlook / Microsoft 365 calendar
+
+1. The agency's Microsoft 365 admin opens the Microsoft Entra admin center → App registrations → New registration.
+2. Under API permissions, add **Microsoft Graph → Application → Calendars.ReadWrite**, then **Grant admin consent**.
+3. Under Certificates & secrets, create a client secret.
+4. Paste the Directory (tenant) ID, Application (client) ID and secret value into the **Outlook / Microsoft 365** card, then **Test connection**.
+
+CRM appointments then appear in each user's Outlook calendar, and are updated or removed when they change. Outlook busy times block those times on booking links and in AI booking. If someone's mailbox differs from their sign-in email, set it in Users → Edit → Outlook calendar email.
 
 ## 7. Lead vendors and website forms
 
