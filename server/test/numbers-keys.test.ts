@@ -91,12 +91,11 @@ describe('dial pad', () => {
   it('dials typed numbers, but refuses another agent’s lead', async () => {
     const maya = await user(MAYA);
     const ok = await voice({ From: `client:${maya.id}`, to: '+14155550199' });
-    expect(ok.text).toContain('<Number');
-    expect(ok.text).toContain('+14155550199');
+    expect(ok.text).toContain('<Conference');
     const other = (await db.select().from(leads)).find((l) => l.agentId && l.agentId !== maya.id && !l.lockedById)!;
     const no = await voice({ From: `client:${maya.id}`, to: other.phone });
     expect(no.text).toContain('another agent');
-    expect(no.text).not.toContain('<Number');
+    expect(no.text).not.toContain('<Conference');
   });
 
   it('can give a lead created from the dial pad to the caller', async () => {

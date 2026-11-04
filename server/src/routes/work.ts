@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { appointments, calls, favorites, leads, messages, templates, users } from '../db/schema.js';
+import { CARRIERS } from '../domain.js';
 import { ah, badRequest, forbidden, notFound } from '../lib/http.js';
 import type { AuthedRequest } from '../middleware/auth.js';
 import { getSettings, notify } from '../services/rules.js';
@@ -70,7 +71,7 @@ workRouter.patch('/appointments/:id', ah<AuthedRequest>(async (req, res) => {
   if (!appt) throw notFound('Appointment not found');
   const lead = await getVisibleLead(req.user, appt.leadId);
   if (req.user.role !== 'admin' && appt.userId !== req.user.id) throw forbidden();
-  await db.update(appointments).set({ status }).where(eq(appointments.id, appt.id));
+  await db.update(appointments).set({ status, updatedAt: new Date() }).where(eq(appointments.id, appt.id));
   if (status === 'noshow') {
     // SOW 6 missed appointment: the "Missed appointment" automation texts the lead to rebook and alerts agent + admin.
     const started = await fire(db, 'missed_appointment', { agencyId: lead.agencyId, leadId: lead.id });
@@ -135,6 +136,6 @@ workRouter.get('/templates', ah<AuthedRequest>(async (req, res) => {
 /** Settings the calendar and dialer need (non-sensitive subset visible to agents). */
 workRouter.get('/settings/public', ah<AuthedRequest>(async (req, res) => {
   const st = await getSettings(req.user.agencyId);
-  res.json({ attemptsDay1: st.attemptsDay1, attemptsPerDay: st.attemptsPerDay, maxAttempts: st.maxAttempts, retryHours: st.retryHours, reminderMinutes: st.reminderMinutes, customFields: st.customFields, teamTargetVisible: st.teamTargetVisible, businessOpen: st.businessOpen, businessClose: st.businessClose, businessDays: st.businessDays });
+  res.json({ attemptsDay1: st.attemptsDay1, attemptsPerDay: st.attemptsPerDay, maxAttempts: st.maxAttempts, retryHours: st.retryHours, reminderMinutes: st.reminderMinutes, customFields: st.customFields, teamTargetVisible: st.teamTargetVisible, agentTargetsVisible: st.agentTargetsVisible, targetStartDay: st.targetStartDay, businessOpen: st.businessOpen, businessClose: st.businessClose, businessDays: st.businessDays, callScripts: st.callScripts, carriers: st.carriers.length ? st.carriers : [...CARRIERS] });
 }));
 

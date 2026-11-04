@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import { agencies, leads, leadSources, templates, users } from '../db/schema.js';
 import { DEFAULT_SETTINGS, LINES } from '../domain.js';
+import { toE164 } from '../integrations/phone.js';
 import { env } from '../config.js';
 import { ah, badRequest, notFound } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
@@ -41,6 +42,7 @@ adminRouter.patch('/users/:id', ah<AuthedRequest>(async (req, res) => {
     name: z.string().min(1).max(120).optional(), role: z.enum(['admin', 'agent']).optional(), lines: z.array(z.enum(LINES)).optional(),
     hoursStart: Hours.optional(), hoursEnd: Hours.optional(), daysOff: Days.optional(),
     minCallsPerDay: z.number().int().min(0).optional(), maxCallsPerDay: z.number().int().min(0).optional(), monthlyTarget: z.number().min(0).optional(),
+    calendarEmail: z.string().email().or(z.literal('')).nullable().optional().transform((v) => (v === '' ? null : v)),
   }).parse(req.body);
   const id = String(req.params.id);
   if (id === req.user.id && b.role === 'agent') throw badRequest('You cannot remove your own Super Admin role');
@@ -89,6 +91,26 @@ const SettingsPatch = z.object({
   customFields: z.array(z.object({ key: z.string().regex(/^[a-z0-9_]+$/).max(40), label: z.string().min(1).max(60), type: z.enum(['text', 'number', 'date']) })).max(30),
   reminderMinutes: z.number().int().min(0).max(1440),
   screeningQuestions: z.array(z.string().max(200)).max(6).transform((a) => a.map((q) => q.trim()).filter(Boolean)),
+  agentTargetsVisible: z.boolean(),
+  targetStartDay: z.number().int().min(1).max(28),
+  carriers: z.array(z.string().trim().min(1).max(80)).max(200).transform((a) => [...new Set(a)]),
+  callScripts: z.record(z.string().max(40), z.object({
+    opening: z.string().max(3000),
+    objections: z.array(z.object({ q: z.string().trim().min(1).max(200), a: z.string().trim().min(1).max(2000) })).max(30),
+  })).refine((r) => Object.keys(r).every((k) => k === '*' || (LINES as readonly string[]).includes(k)), 'Scripts are per line of insurance'),
+  phoneMenu: z.object({
+    enabled: z.boolean(),
+    mainNumber: z.string().max(20).transform((v) => (v ? toE164(v) ?? '' : '')),
+    greeting: z.string().max(500),
+    options: z.array(z.object({ digit: z.string().regex(/^[0-9]$/), label: z.string().trim().min(1).max(60), userIds: z.array(z.string().uuid()).max(20) })).max(9)
+      .refine((o) => new Set(o.map((x) => x.digit)).size === o.length, 'Each menu option needs its own key'),
+    defaultUserIds: z.array(z.string().uuid()).max(20),
+    afterHoursMessage: z.string().max(500),
+  }),
+  missedCallText: z.string().min(1).max(480),
+  missedCallTextOn: z.boolean(),
+  aiConversations: z.boolean(),
+  aiMaxTurns: z.number().int().min(1).max(30),
 }).partial();
 
 adminRouter.patch('/settings', ah<AuthedRequest>(async (req, res) => {

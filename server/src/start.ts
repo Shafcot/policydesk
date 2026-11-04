@@ -6,6 +6,7 @@ import { createAgency } from './db/setup.js';
 
 await runMigrations();
 console.log('Migrations applied');
+await (await import('./db/defaults.js')).upgradeAgencyDefaults();
 
 const email = process.env.SETUP_ADMIN_EMAIL?.trim();
 const password = process.env.SETUP_ADMIN_PASSWORD ?? '';

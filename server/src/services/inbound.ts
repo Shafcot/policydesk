@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { leads, messages } from '../db/schema.js';
 import { stopRuns } from './automation.js';
+import { aiConverse } from './aichat.js';
 import { emitLead } from './realtime.js';
 import { getSettings, notify } from './rules.js';
 
@@ -26,5 +27,7 @@ export async function receiveReply(leadId: string, channel: 'sms' | 'email', bod
     }
   });
   emitLead(lead.agencyId, lead.agentId, 'message:new', { leadId });
+  // Two-way AI texting: answer and try to book them (skips itself when off, handed over or an agent is replying).
+  if (!isStop && process.env.NODE_ENV !== 'test') setImmediate(() => { aiConverse(leadId, channel).catch((e) => console.error('AI conversation failed', e)); });
   return { optedOut: isStop };
 }

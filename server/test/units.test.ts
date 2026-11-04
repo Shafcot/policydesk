@@ -46,3 +46,18 @@ describe('signed links', () => {
     expect(readUnsubToken(`c.${id}.forged`)).toBeNull();
   });
 });
+
+describe('target month', () => {
+  const st = { timezone: 'America/Chicago', targetStartDay: 20 };
+  it('runs from the start day to the day before it next month', async () => {
+    const { targetPeriod } = await import('../src/services/hours.js');
+    const p = targetPeriod(st, new Date('2026-10-05T15:00:00Z'));
+    expect(p.label).toBe('Sep 20 – Oct 19');
+    expect(p.start.toISOString()).toBe('2026-09-20T05:00:00.000Z');
+    expect(p.end.toISOString()).toBe('2026-10-20T05:00:00.000Z');
+    expect(targetPeriod(st, new Date('2026-10-20T15:00:00Z')).label).toBe('Oct 20 – Nov 19');
+    expect(targetPeriod(st, new Date('2026-01-10T15:00:00Z')).label).toBe('Dec 20 – Jan 19');
+    expect(targetPeriod(st, new Date('2026-10-05T15:00:00Z'), -1).label).toBe('Aug 20 – Sep 19');
+    expect(targetPeriod({ ...st, targetStartDay: 1 }, new Date('2026-10-05T15:00:00Z')).label).toBe('October 2026');
+  });
+});

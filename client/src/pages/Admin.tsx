@@ -6,11 +6,12 @@ import { api, ApiError } from '../lib/api';
 import { useMe } from '../lib/auth';
 import { LINES, RESULTS, STG, type User } from '../lib/domain';
 import { fdateY } from '../lib/format';
-import { useLookups, useTeam, useTemplates, type Template } from '../lib/hooks';
+import { useLookups, usePublicSettings, useTeam, useTemplates, type Template } from '../lib/hooks';
 import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
 import { Avatar, colorFor, Loading, Modal, PageHead, Pill, ResultPill, StagePill } from '../components/ui';
 import { ApiKeys, LeadVendors } from '../components/IntegrationKeys';
+import { AiTextingSettings, CarrierSettings, PhoneMenuSettings, ScriptSettings, TargetSettings, type ExtraSettings } from '../components/SettingsExtra';
 import { BuySearch, prettyNumber, useNumbers } from '../components/NumberPicker';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -80,6 +81,7 @@ function UserModal({ user, onClose, onInvited }: { user: User | null; onClose: (
     name: user?.name ?? '', email: user?.email ?? '', role: user?.role ?? 'agent', lines: user?.lines ?? [],
     hoursStart: user?.hoursStart ?? '08:00', hoursEnd: user?.hoursEnd ?? '17:00', daysOff: user?.daysOff ?? ['Sat', 'Sun'],
     minCallsPerDay: user?.minCallsPerDay ?? 50, maxCallsPerDay: user?.maxCallsPerDay ?? 100,
+    calendarEmail: user?.calendarEmail ?? '',
   });
   const toggle = (k: 'lines' | 'daysOff', v: string) => setF({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] });
   // Phone number: keep, none, one from the list (new or already used), or buy a new one.
@@ -96,7 +98,7 @@ function UserModal({ user, onClose, onInvited }: { user: User | null; onClose: (
   const save = useMutation({
     mutationFn: async () => {
       const r = user
-        ? await api(`/admin/users/${user.id}`, { method: 'PATCH', json: { name: f.name, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, daysOff: f.daysOff, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay } })
+        ? await api(`/admin/users/${user.id}`, { method: 'PATCH', json: { name: f.name, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, daysOff: f.daysOff, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay, calendarEmail: f.calendarEmail.trim() || null } })
         : await api<{ inviteLink: string; user: { id: string } }>('/admin/users/invite', { method: 'POST', json: { name: f.name, email: f.email, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay } });
       const id = user?.id ?? (r as { user: { id: string } }).user.id;
       try { await applyNumber(id); } catch (e) { toast(`${user ? 'Saved' : 'User created'}, but the phone number wasn’t set: ${err(e)}`, 'alert'); }
@@ -125,6 +127,7 @@ function UserModal({ user, onClose, onInvited }: { user: User | null; onClose: (
           </select>
           {pick === 'buy' && <BuySearch value={buyNumber} onPick={setBuyNumber} />}
         </div>
+        {user && <div className="field full"><label htmlFor="u-cal">Outlook calendar email (optional)</label><input id="u-cal" className="input" type="email" placeholder={user.email} value={f.calendarEmail} onChange={(e) => setF({ ...f, calendarEmail: e.target.value })} /><small className="help">Only if their Microsoft 365 mailbox differs from their sign-in email. Used for Outlook calendar sync.</small></div>}
         {user && <div className="field full"><label>Days off</label><div className="chips">{DAYS.map((d) => <button type="button" key={d} className={`chip ${f.daysOff.includes(d) ? 'on' : ''}`} onClick={() => toggle('daysOff', d)}>{d}</button>)}</div></div>}
       </div>
       {!user && <p className="help">You’ll get an invitation link to send. Permissions are checked on the server for every request.</p>}
@@ -141,10 +144,10 @@ type Settings = {
   teamTarget: number; teamTargetVisible: boolean; businessDays: string[]; businessOpen: string; businessClose: string; timezone: string;
   reviewLinks: { google: string; facebook: string; yelp: string }; optOutKeywords: string[];
   customFields: { key: string; label: string; type: 'text' | 'number' | 'date' }[]; reminderMinutes: number; screeningQuestions: string[];
-};
+} & ExtraSettings;
 type SettingsResp = { agency: { name: string; brandName: string; brandColor: string | null; logoUrl: string | null }; settings: Settings };
 
-const TABS = [['assignment', 'Lead assignment'], ['calls', 'Call schedule'], ['pipeline', 'Pipeline rules'], ['fields', 'Custom fields'], ['sources', 'Lead sources'], ['templates', 'Message templates'], ['reviews', 'Review links'], ['hours', 'Business hours'], ['brand', 'Branding'], ['optout', 'Opt-out'], ['integrations', 'Integrations']] as const;
+const TABS = [['assignment', 'Lead assignment'], ['calls', 'Call schedule'], ['pipeline', 'Pipeline rules'], ['fields', 'Custom fields'], ['sources', 'Lead sources'], ['templates', 'Message templates'], ['reviews', 'Review links'], ['hours', 'Business hours'], ['brand', 'Branding'], ['optout', 'Opt-out'], ['targets', 'Targets'], ['scripts', 'Call scripts'], ['carriers', 'Carriers'], ['phone', 'Phone menu'], ['ai', 'AI texting'], ['integrations', 'Integrations']] as const;
 type Tab = (typeof TABS)[number][0];
 
 export function SettingsPage() {
@@ -152,6 +155,7 @@ export function SettingsPage() {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('assignment');
   const { data } = useQuery({ queryKey: ['admin-settings'], queryFn: () => api<SettingsResp>('/admin/settings') });
+  const pub = usePublicSettings();
   const [draft, setDraft] = useState<Partial<Settings>>({});
   const [agency, setAgency] = useState<Partial<SettingsResp['agency']>>({});
   const save = useMutation({
@@ -165,7 +169,7 @@ export function SettingsPage() {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const dirty = Object.keys(draft).length > 0 || Object.keys(agency).length > 0;
   const num = (k: keyof Settings, label: string) => <div className="field"><label htmlFor={`s-${k}`}>{label}</label><input id={`s-${k}`} className="input num" type="number" value={s[k] as number} onChange={(e) => set(k, Number(e.target.value) as never)} /></div>;
-  const savesHere = !['sources', 'templates'].includes(tab);
+  const savesHere = !['sources', 'templates', 'integrations'].includes(tab);
 
   return (
     <>
@@ -186,8 +190,8 @@ export function SettingsPage() {
             <label className="check"><input type="checkbox" checked={s.autoRequote} onChange={(e) => set('autoRequote', e.target.checked)} />Quoted or Lost for <input className="input num" type="number" style={{ width: 64 }} value={s.requoteMonths} onChange={(e) => set('requoteMonths', Number(e.target.value))} aria-label="Months" /> months → Ready for Re-Quote + agent reminder</label>
             <label className="check"><input type="checkbox" checked={s.autoRecycle} onChange={(e) => set('autoRecycle', e.target.checked)} />No contact after all call attempts → Recycled</label>
             <div className="sep" /><h3>Call result → stage</h3>
-            <div className="tbl-wrap"><table className="tbl"><tbody>{RESULTS.map((r) => <tr key={r.k}><td><ResultPill result={r.k} /></td><td>→</td><td><StagePill stage={({ no_answer: 'attempted', left_msg: 'attempted', voicemail: 'attempted', call_back: 'followup', needs_quote: 'ready', quoted: 'quoted', sold: 'won', lost: 'lost' } as const)[r.k]} /></td>
-              <td className="muted">{({ call_back: 'call-back booked for the requested time', sold: 'after the policy is created; review request sent', no_answer: 'retry later', voicemail: 'retry later', left_msg: 'retry later' } as Record<string, string>)[r.k] ?? ''}</td></tr>)}</tbody></table></div>
+            <div className="tbl-wrap"><table className="tbl"><tbody>{RESULTS.map((r) => <tr key={r.k}><td><ResultPill result={r.k} /></td><td>→</td><td><StagePill stage={({ no_answer: 'attempted', sent_text: 'attempted', voicemail: 'attempted', call_back: 'followup', needs_quote: 'ready', quoted: 'quoted', sold: 'won', lost: 'lost' } as const)[r.k]} /></td>
+              <td className="muted">{({ call_back: 'call-back booked for the requested time', sold: 'after the policy is created; review request sent', no_answer: 'retry later', voicemail: 'retry later', sent_text: 'retry later' } as Record<string, string>)[r.k] ?? ''}</td></tr>)}</tbody></table></div>
             <p className="help">Stages: {Object.values(STG).map((x) => x.n).join(' → ')}</p>
           </>}
           {tab === 'fields' && <CustomFields value={s.customFields} onChange={(v) => set('customFields', v)} />}
@@ -222,7 +226,12 @@ export function SettingsPage() {
             <p>When a lead replies with any of these words, they’re removed from every SMS, email, automation and campaign.</p>
             <div className="field"><label htmlFor="oo">Keywords (comma separated)</label><input id="oo" className="input mono" value={s.optOutKeywords.join(', ')} onChange={(e) => set('optOutKeywords', e.target.value.split(',').map((x) => x.trim().toUpperCase()).filter(Boolean))} /></div>
           </>}
-          {tab === 'integrations' && <Integrations questions={s.screeningQuestions} onQuestions={(v) => set('screeningQuestions', v)} />}
+          {tab === 'targets' && <TargetSettings s={s} set={set as never} />}
+          {tab === 'scripts' && <ScriptSettings s={s} set={set as never} />}
+          {tab === 'carriers' && <CarrierSettings s={s} set={set as never} fallback={pub.data?.carriers ?? []} />}
+          {tab === 'phone' && <PhoneMenuSettings s={s} set={set as never} />}
+          {tab === 'ai' && <AiTextingSettings s={s} set={set as never} />}
+          {tab === 'integrations' && <Integrations />}
           {savesHere && <div className="row" style={{ justifyContent: 'flex-end' }}>{dirty && <button className="btn" onClick={() => { setDraft({}); setAgency({}); }}>Discard</button>}<button className="btn primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>Save changes</button></div>}
         </div></section>
       </div>
@@ -314,7 +323,7 @@ const INTEGRATIONS: { key: keyof Omit<Status, 'webhooks'>; name: string; does: s
   { key: 'googleAds', name: 'Google Ads lead forms', does: 'Google lead form submissions arrive automatically', needs: 'GOOGLE_ADS_WEBHOOK_KEY' },
 ];
 
-function Integrations({ questions, onQuestions }: { questions: string[]; onQuestions: (v: string[]) => void }) {
+function Integrations() {
   const toast = useToast();
   const status = useQuery({ queryKey: ['integrations'], queryFn: () => api<Status>('/integrations/status') });
   const copy = (t: string) => navigator.clipboard.writeText(t).then(() => toast('Copied'), () => toast(t, 'copy'));
@@ -337,10 +346,6 @@ function Integrations({ questions, onQuestions }: { questions: string[]; onQuest
       <LeadVendors origin={origin} />
       <div className="sep" /><h3>Phone numbers</h3>
       <p className="help">Add, buy and assign numbers on the <Link to="/numbers">Phone numbers</Link> page.</p>
-      <div className="sep" /><h3>Speed-to-lead screening questions</h3>
-      <p className="help">The AI reply asks these when a new lead arrives and no agent is free (needs OpenAI). Save with the button below.</p>
-      {questions.map((q, i) => <div className="row" key={i} style={{ flexWrap: 'nowrap' }}><input className="input" value={q} onChange={(e) => onQuestions(questions.map((x, j) => (j === i ? e.target.value : x)))} aria-label={`Question ${i + 1}`} /><button className="icon-btn sm" onClick={() => onQuestions(questions.filter((_, j) => j !== i))} aria-label="Remove question"><Icon name="trash" className="sm" /></button></div>)}
-      {questions.length < 6 && <button className="btn sm" style={{ justifySelf: 'start' }} onClick={() => onQuestions([...questions, ''])}><Icon name="plus" className="sm" />Add question</button>}
     </>
   );
 }

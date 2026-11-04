@@ -11,6 +11,7 @@ import { getSettings, notify, runAutoMoves } from './rules.js';
 import { sendBroadcast } from './campaigns.js';
 import { backupDatabase } from './backup.js';
 import { deliverQueued } from '../integrations/delivery.js';
+import { syncOutlook } from '../integrations/outlook.js';
 
 const LOCK_KEY = 4207061; // only one worker process does the work at a time
 
@@ -65,6 +66,21 @@ async function holidays(agencyId: string, md: string) {
 }
 
 /** Appointment reminders: notify the agent and text the lead `reminderMinutes` before the start. */
+/** "No contact for N days" automations: re-contact quiet open leads (once per N days per flow). */
+async function inactiveLeads(agencyId: string) {
+  const flows = await db.query.automations.findMany({ where: (a, { and, eq }) => and(eq(a.agencyId, agencyId), eq(a.trigger, 'inactive'), eq(a.active, true)) });
+  for (const f of flows) {
+    const days = f.triggerConfig.days ?? 45;
+    const quiet = await db.execute<{ id: string }>(sql`
+      select l.id from leads l
+      where l.agency_id = ${agencyId} and l.stage not in ('won', 'lost') and l.opt_out = false
+        and coalesce(l.last_contact_at, l.created_at) < now() - make_interval(days => ${days})
+        and not exists (select 1 from automation_runs r where r.automation_id = ${f.id} and r.lead_id = l.id and r.created_at > now() - make_interval(days => ${days}))
+      order by coalesce(l.last_contact_at, l.created_at) limit 200`);
+    for (const r of quiet.rows) await fire(db, 'inactive', { agencyId, leadId: r.id, days });
+  }
+}
+
 async function reminders() {
   const rows = await db.select({ a: appointments, l: leads }).from(appointments).innerJoin(leads, eq(appointments.leadId, leads.id))
     .where(and(eq(appointments.status, 'scheduled'), isNull(appointments.remindedAt), gt(appointments.startsAt, new Date()), lte(appointments.startsAt, new Date(Date.now() + 24 * 36e5))));
@@ -86,6 +102,10 @@ export async function tick() {
     await loadIntegrationSettings(); // pick up keys saved in Settings → Integrations (other processes)
     await processDueRuns();
     await deliverQueued();
+    await syncOutlook().catch((e) => console.error('Outlook sync failed', e));
+    // Calls whose end Twilio never reported (lost webhook): close them after 4 hours and free the agent.
+    await db.execute(sql`update live_calls set status = 'ended', ended_at = now(), end_reason = coalesce(end_reason, 'stale') where status in ('ringing', 'active') and created_at < now() - interval '4 hours'`);
+    await db.execute(sql`update users set status = 'available' where status = 'oncall' and not exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.status in ('ringing', 'active')) and exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.end_reason = 'stale' and lc.ended_at > now() - interval '5 minutes')`);
     await reminders();
     const due = await db.query.campaigns.findMany({ where: and(eq(campaigns.kind, 'broadcast'), isNull(campaigns.sentAt), lte(campaigns.scheduledFor, new Date())) });
     for (const c of due) {
@@ -101,6 +121,7 @@ export async function tick() {
       await once('birthdays', a.id, p.date, () => birthdays(a.id, p.md));
       await once('holidays', a.id, p.date, () => holidays(a.id, p.md));
       await once('followups', a.id, p.date, () => followupsDue(a.id));
+      await once('inactive', a.id, p.date, () => inactiveLeads(a.id));
     }
     // One database backup per day (first agency's date is fine: the backup covers everything).
     const first = (await db.select({ id: agencies.id }).from(agencies).limit(1))[0];

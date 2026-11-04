@@ -41,3 +41,37 @@ export function nextBusinessTime(d: Date, st: AgencySettings): Date {
   }
   return d;
 }
+
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * The agency's target month, which can start on any day (e.g. the 20th → Sept 20 – Oct 19), in the agency's time zone.
+ * `offset` moves back/forward whole periods (-1 = the previous target month).
+ */
+export function targetPeriod(st: Pick<AgencySettings, 'timezone' | 'targetStartDay'>, now = new Date(), offset = 0) {
+  const day = Math.min(28, Math.max(1, Math.round(st.targetStartDay || 1)));
+  const p = localParts(now, st.timezone);
+  let y = p.y, m = p.m - 1; // 0-based month whose `day` starts the current period
+  if (p.d < day) m -= 1;
+  m += offset;
+  const norm = (yy: number, mm: number) => ({ y: yy + Math.floor(mm / 12), m: ((mm % 12) + 12) % 12 });
+  const s = norm(y, m), e = norm(y, m + 1);
+  y = s.y;
+  const start = zonedToUtc(s.y, s.m + 1, day, 0, 0, st.timezone);
+  const end = zonedToUtc(e.y, e.m + 1, day, 0, 0, st.timezone);
+  const last = new Date(end.getTime() - 864e5);
+  const lp = localParts(last, st.timezone);
+  const label = day === 1 ? `${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][s.m]} ${s.y}` : `${MON[s.m]} ${day} – ${MON[lp.m - 1]} ${lp.d}`;
+  const daysLeft = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / 864e5));
+  return { start, end, label, daysLeft, key: `${s.y}-${String(s.m + 1).padStart(2, '0')}` };
+}
+
+/** Start of today and of this week (Monday) in the agency's time zone. */
+export function dayAndWeekStart(tz: string, now = new Date()) {
+  const p = localParts(now, tz);
+  const today = zonedToUtc(p.y, p.m, p.d, 0, 0, tz);
+  const dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(p.weekday);
+  const wk = new Date(Date.UTC(p.y, p.m - 1, p.d - dow, 12));
+  const week = zonedToUtc(wk.getUTCFullYear(), wk.getUTCMonth() + 1, wk.getUTCDate(), 0, 0, tz);
+  return { today, week };
+}

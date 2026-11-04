@@ -21,6 +21,8 @@ export type TriggerContext = {
   stage?: Stage;
   result?: CallResult;
   daysBefore?: number;
+  /** inactive: the automation's day count that matched. */
+  days?: number;
 };
 
 /** Enrols the lead/customer into every active automation listening for this trigger. */
@@ -31,6 +33,7 @@ export async function fire(x: Exec, trigger: Trigger, ctx: TriggerContext) {
     const cfg = a.triggerConfig;
     if (trigger === 'stage_change' && cfg.stages?.length && (!ctx.stage || !cfg.stages.includes(ctx.stage))) continue;
     if (trigger === 'call_result' && cfg.results?.length && (!ctx.result || !cfg.results.includes(ctx.result))) continue;
+    if (trigger === 'inactive' && (ctx.days === undefined || (cfg.days ?? 45) !== ctx.days)) continue;
     if (trigger === 'renewal_date' && cfg.daysBefore?.length && (ctx.daysBefore === undefined || !cfg.daysBefore.includes(ctx.daysBefore))) continue;
     // Never enrol the same contact twice in a flow that is still running.
     const dup = await x.query.automationRuns.findFirst({ where: and(
@@ -79,6 +82,8 @@ async function evaluate(x: Exec, run: AutomationRun, c: ConditionKind): Promise<
       const reply = await x.query.messages.findFirst({ where: and(eq(messages.leadId, run.leadId), eq(messages.direction, 'in'), gt(messages.createdAt, run.createdAt)) });
       return !reply;
     }
+    // Nobody has spoken with the lead yet (new / contact attempted / recycled).
+    case 'not_reached': return !!lead && ['new', 'attempted', 'recycled'].includes(lead.stage) && !lead.optOut;
     case 'is_commercial': return lead?.type === 'commercial';
     case 'is_personal': return lead?.type === 'personal';
   }
@@ -198,6 +203,40 @@ export async function processDueRuns(limit = 100) {
   return due.length;
 }
 
+type Flow = Omit<typeof automations.$inferInsert, 'agencyId'>;
+const W = (amount: number, unit: 'hours' | 'days' | 'weeks' | 'months'): Step => ({ type: 'wait', amount, unit });
+const NOT_REACHED_YET: Step = { type: 'condition', condition: 'not_reached' };
+
+/**
+ * New-lead follow-up cadence (client spec): text + email right away (Welcome flow), then while the lead hasn't been reached:
+ * day 1 another text ~1h later and email ~1h after that; day 2 two more touches; then every 2nd–3rd day until ~day 20;
+ * then a monthly re-contact drip. Every wait and message is editable in Automations.
+ */
+export function newLeadCadence(t: (name: string) => string | null): Flow {
+  const sms = (name: string): Step[] => [NOT_REACHED_YET, { type: 'action', action: 'send_sms', templateId: t(name) }];
+  const email = (name: string): Step[] => [NOT_REACHED_YET, { type: 'action', action: 'send_email', templateId: t(name) }];
+  return {
+    name: 'New-lead follow-up cadence', trigger: 'new_lead',
+    steps: [
+      W(1, 'hours'), ...sms('Follow-up text (1 hour)'), W(1, 'hours'), ...email('Follow-up email (day 1)'),
+      W(22, 'hours'), ...sms('Follow-up text (day 2)'), W(4, 'hours'), ...email('Follow-up email (day 2)'),
+      W(2, 'days'), ...sms('Follow-up text (every few days)'), W(3, 'days'), ...email('Follow-up email (every few days)'),
+      W(2, 'days'), ...sms('Follow-up text (every few days)'), W(3, 'days'), ...email('Follow-up email (every few days)'),
+      W(2, 'days'), ...sms('Follow-up text (every few days)'), W(3, 'days'), ...email('Follow-up email (every few days)'),
+      W(3, 'days'), ...sms('Follow-up text (every few days)'),
+      W(1, 'months'), ...email('Monthly check-in email'), W(1, 'months'), ...sms('Monthly check-in text'),
+      W(1, 'months'), ...email('Monthly check-in email'), W(1, 'months'), ...sms('Monthly check-in text'),
+      W(1, 'months'), ...email('Monthly check-in email'), W(1, 'months'), ...sms('Monthly check-in text'),
+    ],
+  };
+}
+
+/** After a set number of days with no contact, start contacting the lead again. */
+export const reContactFlow = (t: (name: string) => string | null): Flow => ({
+  name: 'Re-contact quiet leads', trigger: 'inactive', triggerConfig: { days: 45 },
+  steps: [{ type: 'action', action: 'send_sms', templateId: t('Monthly check-in text') }, { type: 'action', action: 'create_task', text: 'Re-contact: this lead has been quiet for a while' }, W(2, 'days'), { type: 'condition', condition: 'not_replied' }, { type: 'action', action: 'send_email', templateId: t('Monthly check-in email') }],
+});
+
 /** The nine ready-made automations from the SOW, created inactive-safe for a new agency. */
 export async function installDefaultAutomations(x: Exec, agencyId: string) {
   const tpl = await x.query.templates.findMany({ where: eq(templates.agencyId, agencyId) });
@@ -205,12 +244,13 @@ export async function installDefaultAutomations(x: Exec, agencyId: string) {
   const flows: Omit<typeof automations.$inferInsert, 'agencyId'>[] = [
     { name: 'Welcome email + SMS', trigger: 'new_lead', steps: [{ type: 'wait', amount: 1, unit: 'minutes' }, { type: 'action', action: 'send_sms', templateId: t('Welcome') }, { type: 'action', action: 'send_email', templateId: t('Welcome email') }] },
     { name: 'Speed-to-lead', trigger: 'new_lead', steps: [{ type: 'condition', condition: 'no_agent_available' }, { type: 'action', action: 'ai_reply' }, { type: 'action', action: 'send_booking_link', templateId: t('Booking link') }] },
-    { name: 'New-lead drip', trigger: 'new_lead', steps: [{ type: 'wait', amount: 1, unit: 'days' }, { type: 'action', action: 'send_sms', templateId: t('Missed you') }, { type: 'wait', amount: 1, unit: 'days' }, { type: 'action', action: 'send_sms', templateId: t('Quote ready') }, { type: 'wait', amount: 1, unit: 'weeks' }, { type: 'action', action: 'send_email', templateId: t('Quote follow-up') }, { type: 'wait', amount: 1, unit: 'months' }, { type: 'action', action: 'send_email', templateId: t('Quote follow-up') }] },
+    newLeadCadence(t),
     { name: 'Missed appointment', trigger: 'missed_appointment', stopOnBooking: true, steps: [{ type: 'action', action: 'send_sms', templateId: t('Rebook missed appointment') }, { type: 'action', action: 'alert_team', text: 'Missed appointment — lead asked to rebook' }] },
     { name: '5-month re-quote', trigger: 'stage_change', triggerConfig: { stages: ['requote'] }, stopOnWonLost: false, steps: [{ type: 'action', action: 'send_sms', templateId: t('Quote ready') }, { type: 'action', action: 'create_task', text: 'Re-quote this lead' }] },
     { name: 'Renewal reminder (customer)', trigger: 'renewal_date', triggerConfig: { daysBefore: [60, 30] }, stopOnWonLost: false, steps: [{ type: 'action', action: 'send_email', templateId: t('Renewal review') }] },
     { name: 'Renewal review (agent)', trigger: 'renewal_date', triggerConfig: { daysBefore: [60, 30] }, stopOnWonLost: false, businessHoursOnly: false, steps: [{ type: 'action', action: 'create_task', text: 'Annual policy review before renewal' }] },
     { name: 'Review request', trigger: 'policy_won', stopOnWonLost: false, steps: [{ type: 'wait', amount: 1, unit: 'days' }, { type: 'action', action: 'send_review_request', templateId: t('Review request') }] },
+    reContactFlow(t),
     { name: 'Quote follow-up', trigger: 'call_result', triggerConfig: { results: ['quoted'] }, steps: [{ type: 'wait', amount: 2, unit: 'days' }, { type: 'condition', condition: 'not_replied' }, { type: 'action', action: 'send_email', templateId: t('Quote follow-up') }] },
   ];
   await x.insert(automations).values(flows.map((f) => ({ active: f.name !== 'Quote follow-up', ...f, agencyId })));

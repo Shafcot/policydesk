@@ -1,7 +1,7 @@
 // Super Admin: the agency's phone numbers. Add numbers you already have, import them from Twilio or buy new ones,
 // and assign one to each user (their caller ID; calls to it ring them in the browser).
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { useTeam } from '../lib/hooks';
 import { useToast } from '../lib/toast';
@@ -52,6 +52,7 @@ export function Numbers() {
         )}
       </section>
       <p className="help" style={{ marginTop: 8 }}>Users without a number call from the default caller ID{defaultCallerId ? ` (${prettyNumber(defaultCallerId)})` : ' (set in Settings → Integrations → Twilio)'}.</p>
+      <SpamProtection />
       {modal && <NumberModal mode={modal} onClose={() => setModal(null)} />}
       {removing && <RemoveModal n={removing} onClose={() => setRemoving(null)} />}
     </>
@@ -100,5 +101,43 @@ function RemoveModal({ n, onClose }: { n: PhoneNumber; onClose: () => void }) {
       <p>{n.userName ? `${n.userName} will call from the default caller ID until you give them another number.` : 'It’s not assigned to anyone.'}</p>
       {n.twilioSid && <label className="check"><input type="checkbox" checked={release} onChange={(e) => setRelease(e.target.checked)} />Also release it from Twilio (stops the monthly charge; the number can’t be recovered)</label>}
     </Modal>
+  );
+}
+
+type Health = { numbers: { number: string; calls7d: number; answered7d: number; answerRate: number | null; callsToday: number; status: 'ok' | 'warning'; flags: string[] }[]; trust: { item: string; status: string }[] | null };
+const trustColor = (st: string) => (/approved|compliant|verified|twilio-approved/i.test(st) ? '--ok' : /pending|review|draft|in-review/i.test(st) ? '--warn' : '--s9');
+
+/** Spam-likely protection: register numbers with the carriers' caller-trust programs and watch each number's answer rate. */
+function SpamProtection() {
+  const h = useQuery({ queryKey: ['numbers-health'], queryFn: () => api<Health>('/admin/numbers/health'), refetchInterval: 5 * 60_000 });
+  if (!h.data) return null;
+  return (
+    <section className="panel" style={{ marginTop: 16 }}>
+      <div className="panel-h"><h2>Spam-likely protection</h2></div>
+      <div className="panel-b stack">
+        <p className="help">Carriers label numbers “Spam likely” when they aren’t registered or when they make many short or unanswered calls. Register every number below, then watch the answer rate. A sudden drop usually means a label.</p>
+        <div className="grid g2">
+          <div>
+            <div className="lbl-sm">1. Caller registration (Twilio Trust Hub)</div>
+            {h.data.trust ? <div className="list">{h.data.trust.map((t) => <div className="li" key={t.item}><div className="grow"><b>{t.item}</b></div><Pill color={trustColor(t.status)}>{t.status.replace(/-/g, ' ')}</Pill></div>)}</div>
+              : <p className="muted">Shows once Twilio is connected.</p>}
+            <p className="help" style={{ marginTop: 8 }}>In the Twilio Console → Trust Hub: create the business profile, then add SHAKEN/STIR, CNAM (shows the agency name) and Voice Integrity, and assign all numbers.</p>
+          </div>
+          <div>
+            <div className="lbl-sm">2. Free carrier registry</div>
+            <p>Register every number at <a href="https://www.freecallerregistry.com" target="_blank" rel="noreferrer">freecallerregistry.com</a>. It covers AT&amp;T (Hiya), T-Mobile (First Orion) and Verizon (TNS) in one form, at no cost.</p>
+            <p className="help">Re-register when you add numbers. Spread heavy dialing across several numbers, and keep each agent on their own local number.</p>
+          </div>
+        </div>
+        <div className="lbl-sm">3. Number health (last 7 days)</div>
+        <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Number</th><th className="r">Calls</th><th className="r">Answered</th><th className="r">Answer rate</th><th className="r">Today</th><th>Status</th></tr></thead><tbody>
+          {h.data.numbers.map((n) => (
+            <tr key={n.number}><td className="mono">{prettyNumber(n.number)}</td><td className="r num">{n.calls7d}</td><td className="r num">{n.answered7d}</td><td className="r num">{n.answerRate === null ? '—' : `${n.answerRate}%`}</td><td className="r num">{n.callsToday}</td>
+              <td>{n.status === 'ok' ? <Pill color="--ok">Healthy</Pill> : <div><Pill color="--warn">Check</Pill>{n.flags.map((f) => <small className="help" key={f} style={{ display: 'block', marginTop: 4, maxWidth: 380 }}>{f}</small>)}</div>}</td></tr>
+          ))}
+          {!h.data.numbers.length && <tr><td colSpan={6} className="empty">Add numbers to see their health.</td></tr>}
+        </tbody></table></div>
+      </div>
+    </section>
   );
 }

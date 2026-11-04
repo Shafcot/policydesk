@@ -3,13 +3,14 @@ import { Router } from 'express';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { calls, deviceTokens, leads, users } from '../db/schema.js';
+import { calls, deviceTokens, leads, users, voicemails } from '../db/schema.js';
 import { ah, badRequest, notFound } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { integrationStatus, cfg, enabled, rawSetting, sourceOf } from '../integrations/settings.js';
 import { GROUPS, fieldDef, saveIntegrationSettings } from '../integrations/store.js';
 import { openai } from '../integrations/providers.js';
 import { twilioClient } from '../integrations/twilio.js';
+import { testOutlook } from '../integrations/outlook.js';
 import { cert, deleteApp, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { signPath, verifyPath, readUnsubToken } from '../integrations/signed.js';
@@ -68,6 +69,18 @@ mediaRouter.get('/media/recordings/:id', ah(async (req, res) => {
   res.setHeader('cache-control', 'private, max-age=3600');
   res.send(Buffer.from(await r.arrayBuffer()));
 }));
+/** Voicemail audio (signed link, like call recordings). */
+mediaRouter.get('/media/voicemails/:id', ah(async (req, res) => {
+  const path = `/media/voicemails/${req.params.id}`;
+  if (!verifyPath(path, String(req.query.exp ?? ''), String(req.query.sig ?? ''))) return res.sendStatus(403);
+  const vm = await db.query.voicemails.findFirst({ where: eq(voicemails.id, String(req.params.id)) });
+  if (!vm) return res.sendStatus(404);
+  const r = await fetchRecording(vm.recordingUrl).catch(() => null);
+  if (!r?.ok) return res.status(502).type('text/plain').send('Voicemail is not available right now');
+  res.setHeader('content-type', 'audio/mpeg');
+  res.setHeader('cache-control', 'private, max-age=3600');
+  res.send(Buffer.from(await r.arrayBuffer()));
+}));
 mediaRouter.get('/api/public/unsubscribe/:token', ah(async (req, res) => {
   const t = readUnsubToken(String(req.params.token));
   let leadId: string | null = null;
@@ -81,7 +94,7 @@ mediaRouter.get('/api/public/unsubscribe/:token', ah(async (req, res) => {
 
 const GROUP_ON: Record<string, () => boolean> = {
   general: () => !!cfg.publicApiUrl(), twilio: () => enabled.voice() || enabled.sms(), sendgrid: enabled.email, openai: enabled.ai,
-  firebase: () => enabled.push() && !!cfg.firebaseWeb().apiKey, facebook: enabled.facebook, google: enabled.googleAds,
+  firebase: () => enabled.push() && !!cfg.firebaseWeb().apiKey, facebook: enabled.facebook, google: enabled.googleAds, microsoft: enabled.outlook,
 };
 const mask = (v: string) => (v.length <= 8 ? '••••' : `••••${v.slice(-4)}`);
 
@@ -165,6 +178,10 @@ integrationsRouter.post('/admin/integrations/test/:group', requireAdmin, ah<Auth
       const r = await fetch(`https://graph.facebook.com/${f.graphVersion}/me?fields=name&access_token=${encodeURIComponent(f.pageToken)}`);
       const j = (await r.json()) as { name?: string; error?: { message: string } };
       return j.name ? ok(`Page token works for "${j.name}".`) : fail(j.error?.message ?? 'Facebook rejected the token.');
+    }
+    if (g === 'microsoft') {
+      if (!enabled.outlook()) return fail('Fill in all three Microsoft fields first.');
+      return ok(await testOutlook(req.user.calendarEmail || req.user.email));
     }
     return fail('There is nothing to test for this one. It works once saved.');
   } catch (e) {

@@ -27,7 +27,7 @@ const AutomationIn = z.object({
   name: z.string().min(1).max(120),
   active: z.boolean(),
   trigger: z.enum(TRIGGERS),
-  triggerConfig: z.object({ stages: z.array(z.enum(STAGES)).optional(), results: z.array(z.enum(CALL_RESULTS)).optional(), daysBefore: z.array(z.number().int().min(0).max(365)).optional() }),
+  triggerConfig: z.object({ stages: z.array(z.enum(STAGES)).optional(), results: z.array(z.enum(CALL_RESULTS)).optional(), daysBefore: z.array(z.number().int().min(0).max(365)).optional(), days: z.number().int().min(1).max(365).optional() }),
   steps: z.array(StepSchema).max(40),
   stopOnReply: z.boolean(), stopOnBooking: z.boolean(), stopOnWonLost: z.boolean(), businessHoursOnly: z.boolean(),
 });

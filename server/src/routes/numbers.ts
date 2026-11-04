@@ -1,7 +1,7 @@
 // Phone numbers: the agency's pool of numbers (added by hand, imported from Twilio, or bought through Twilio),
 // each assignable to one user as their caller ID and inbound line. Plus the dial pad's number lookup.
 import { Router } from 'express';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { phoneNumbers, users } from '../db/schema.js';
@@ -10,7 +10,7 @@ import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { cfg } from '../integrations/settings.js';
 import { toE164 } from '../integrations/phone.js';
 import { twilioClient } from '../integrations/twilio.js';
-import { leadByPhone } from '../integrations/webhooks.js';
+import { leadByPhone } from '../integrations/callflow.js';
 
 export const numbersRouter = Router();
 type Exec = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -151,4 +151,49 @@ numbersRouter.get('/dialpad/lookup', ah<AuthedRequest>(async (req, res) => {
   const mine = req.user.role === 'admin' || lead.agentId === req.user.id;
   if (!mine) return res.json({ valid: true, number: e164, lead: null, blocked: 'This number belongs to a lead assigned to another agent.' });
   res.json({ valid: true, number: e164, lead });
+}));
+
+/* ---------- Spam-likely protection ---------- */
+
+/**
+ * Number reputation: per number, outbound calls and answer rate (last 7 days) — a sudden drop in answers is the
+ * usual sign a number is being labelled "Spam likely" — plus the Twilio caller-trust registrations that prevent it.
+ */
+numbersRouter.get('/admin/numbers/health', requireAdmin, ah<AuthedRequest>(async (req, res) => {
+  const stats = await db.execute<{ number: string; calls: number; answered: number; short: number; today: number }>(sql`
+    select pn.number,
+      count(lc.id)::int as calls,
+      count(lc.id) filter (where lc.answered_at is not null)::int as answered,
+      count(lc.id) filter (where lc.answered_at is not null and lc.ended_at - lc.answered_at < interval '10 seconds')::int as short,
+      count(lc.id) filter (where lc.created_at > now() - interval '1 day')::int as today
+    from phone_numbers pn
+    left join live_calls lc on lc.agent_id = pn.user_id and lc.direction = 'out' and lc.created_at > now() - interval '7 days'
+    where pn.agency_id = ${req.user.agencyId}
+    group by pn.number`);
+  const numbers = stats.rows.map((r) => {
+    const rate = r.calls ? Math.round((r.answered / r.calls) * 100) : null;
+    const flags: string[] = [];
+    if (r.calls >= 30 && rate !== null && rate < 12) flags.push('Very few calls are answered. The number may be labelled “Spam likely”. Register it (below) and rest it for a few days, or swap in another number.');
+    if (r.today > 150) flags.push('More than 150 calls today from one number. Carriers flag heavy use; spread calls across more numbers.');
+    if (r.answered >= 10 && r.short / r.answered > 0.5) flags.push('Most answered calls end within 10 seconds, a pattern carriers treat as spam.');
+    return { number: r.number, calls7d: r.calls, answered7d: r.answered, answerRate: rate, callsToday: r.today, status: flags.length ? 'warning' : 'ok', flags };
+  });
+
+  // Twilio Trust Hub registrations (business profile, SHAKEN/STIR, CNAM caller name, Voice Integrity).
+  let trust: { item: string; status: string }[] | null = null;
+  if (twilioRest()) {
+    try {
+      const c = twilioClient();
+      const profiles = await c.trusthub.v1.customerProfiles.list({ limit: 20 });
+      const products = await c.trusthub.v1.trustProducts.list({ limit: 50 });
+      const find = (re: RegExp) => products.find((p) => re.test(`${p.friendlyName} ${p.policySid}`))?.status ?? 'not started';
+      trust = [
+        { item: 'Business profile (Trust Hub)', status: profiles[0]?.status ?? 'not started' },
+        { item: 'SHAKEN/STIR (calls show as verified)', status: find(/shaken|stir/i) },
+        { item: 'Caller name (CNAM)', status: find(/cnam/i) },
+        { item: 'Voice Integrity (spam remediation)', status: find(/integrity/i) },
+      ];
+    } catch (e) { trust = [{ item: 'Trust Hub', status: `could not read: ${e instanceof Error ? e.message : e}` }]; }
+  }
+  res.json({ numbers, trust });
 }));

@@ -6,7 +6,11 @@ import { cfg, enabled } from './settings.js';
 
 let client: { key: string; c: ReturnType<typeof twilio> } | null = null;
 /** REST client; rebuilt when the Account SID or Auth Token changes in Settings → Integrations. */
+let testClient: unknown = null;
+/** Tests only: replace the Twilio REST client with a fake. */
+export const setTwilioClientForTests = (c: unknown) => { testClient = c; };
 export function twilioClient() {
+  if (testClient) return testClient as ReturnType<typeof twilio>;
   const t = cfg.twilio();
   if (!t.accountSid || !t.authToken) throw new Error('Twilio is not connected. Add the Account SID and Auth Token in Settings → Integrations.');
   const key = `${t.accountSid}:${t.authToken}`;

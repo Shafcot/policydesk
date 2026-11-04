@@ -3,20 +3,21 @@ import { useQuery } from '@tanstack/react-query';
 import { api, qs } from '../lib/api';
 import { useMe } from '../lib/auth';
 import { fullName, type Lead } from '../lib/domain';
-import { ago, kmoney, money, pct } from '../lib/format';
+import { ago, kmoney, money, pct, dur } from '../lib/format';
 import { useOpenLead } from '../lib/leadLink';
 import { Icon } from '../components/Icon';
 import { Avatar, colorFor, Loading, PageHead, StagePill } from '../components/ui';
 import { downloadCsv } from '../lib/csv';
 
 type Report = {
-  production: { month: string; premium: number }[];
+  production: { month: string; label: string; premium: number }[];
   bySource: { name: string; premium: number; sold: number }[];
   byCarrier: { name: string; premium: number; sold: number }[];
   roi: { name: string; vendor: boolean; leads: number; costPerLead: number; cost: number; won: number; conversion: number; revenue: number; roi: number | null }[];
-  agents: { id: string; name: string; premium: number; sold: number; personal: number; commercial: number; calls: number; contacts: number; quotes: number; leads: number; conversion: number }[];
+  agents: { id: string; name: string; premium: number; sold: number; personal: number; commercial: number; calls: number; contacts: number; quotes: number; leads: number; conversion: number; talkSec: number; avgCallSec: number }[];
 };
 
+const hm = (sec: number) => { const m = Math.round(sec / 60); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
 const monthLabel = (m: string) => new Date(`${m}-01T12:00:00`).toLocaleDateString('en-US', { month: 'short' });
 
 function HBars({ rows, onClick }: { rows: { name: string; value: number; color?: string; id?: string }[]; onClick?: (id: string) => void }) {
@@ -56,9 +57,9 @@ export function Reports() {
       <div className="grid g2">
         {isAdmin && <section className="panel"><div className="panel-h"><h2>Leaderboard · sales by agent</h2>{csv('leaderboard', [['Agent', 'Premium', 'Policies'], ...data.agents.map((a) => [a.name, a.premium, a.sold])])}</div>
           <div className="panel-b"><HBars rows={[...data.agents].sort((a, b) => b.premium - a.premium).map((a) => ({ name: a.name, value: a.premium, color: colorFor(a.id), id: a.id }))} onClick={setDrill} /></div></section>}
-        <section className="panel"><div className="panel-h"><h2>Production by month</h2>{csv('production', [['Month', 'Premium'], ...data.production.map((p) => [p.month, p.premium])])}</div><div className="panel-b">
+        <section className="panel"><div className="panel-h"><h2>Production by month</h2>{csv('production', [['Target month', 'Premium'], ...data.production.map((p) => [p.label, p.premium])])}</div><div className="panel-b">
           <div className="colchart">{data.production.map((p, i) => <div className="c" key={p.month}><span>{kmoney(p.premium)}</span><i className={i === data.production.length - 1 ? 'cur' : ''} style={{ height: `${pct(p.premium, pmax)}%` }} /></div>)}</div>
-          <div className="colchart-x">{data.production.map((p) => <span key={p.month}>{monthLabel(p.month)}</span>)}</div></div></section>
+          <div className="colchart-x">{data.production.map((p) => <span key={p.month} title={p.label}>{p.label.includes('–') ? p.label.split(' – ')[0] : monthLabel(p.month)}</span>)}</div></div></section>
         <section className="panel"><div className="panel-h"><h2>Sales by lead source</h2>{csv('source', [['Source', 'Premium', 'Policies'], ...data.bySource.map((r) => [r.name, r.premium, r.sold])])}</div><div className="panel-b"><HBars rows={data.bySource.map((r) => ({ name: r.name, value: r.premium }))} /></div></section>
         <section className="panel"><div className="panel-h"><h2>Sales by carrier</h2>{csv('carrier', [['Carrier', 'Premium', 'Policies'], ...data.byCarrier.map((r) => [r.name, r.premium, r.sold])])}</div><div className="panel-b"><HBars rows={data.byCarrier.map((r) => ({ name: r.name, value: r.premium, color: '--s4' }))} /></div></section>
       </div>
@@ -67,12 +68,12 @@ export function Reports() {
           {data.roi.map((r) => <tr key={r.name}><td>{r.name}{r.vendor && <small className="muted"> · vendor</small>}</td><td className="r num">{r.leads}</td><td className="r num">{money(r.costPerLead)}</td><td className="r num">{money(r.cost)}</td><td className="r num">{r.won}</td><td className="r num">{r.conversion}%</td><td className="r num">{money(r.revenue)}</td>
             <td className="r num" style={{ fontWeight: 600, color: r.roi == null ? 'var(--muted)' : r.roi >= 0 ? 'var(--ok)' : 'var(--bad)' }}>{r.roi == null ? 'Free' : `${r.roi}%`}</td></tr>)}
         </tbody></table></div></section>
-      <section className="panel" style={{ marginTop: 16 }}><div className="panel-h"><h2>Agent performance</h2>{csv('performance', [['Agent', 'Calls', 'Contacts', 'Quotes', 'Wins', 'Lead conversion %', 'Premium', 'Personal', 'Commercial'], ...data.agents.map((a) => [a.name, a.calls, a.contacts, a.quotes, a.sold, a.conversion, a.premium, a.personal, a.commercial])])}</div>
-        <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Agent</th><th className="r">Calls</th><th className="r">Contacts</th><th className="r">Quotes</th><th className="r">Wins</th><th className="r">Lead conversion</th><th className="r">Premium</th><th style={{ minWidth: 200 }}>Personal vs commercial</th></tr></thead><tbody>
+      <section className="panel" style={{ marginTop: 16 }}><div className="panel-h"><h2>Agent performance</h2>{csv('performance', [['Agent', 'Calls', 'Time on calls (min)', 'Avg call (min)', 'Contacts', 'Quotes', 'Wins', 'Lead conversion %', 'Premium', 'Personal', 'Commercial'], ...data.agents.map((a) => [a.name, a.calls, Math.round(a.talkSec / 60), Math.round(a.avgCallSec / 6) / 10, a.contacts, a.quotes, a.sold, a.conversion, a.premium, a.personal, a.commercial])])}</div>
+        <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Agent</th><th className="r">Calls</th><th className="r">Time on calls</th><th className="r">Avg call</th><th className="r">Contacts</th><th className="r">Quotes</th><th className="r">Wins</th><th className="r">Lead conversion</th><th className="r">Premium</th><th style={{ minWidth: 200 }}>Personal vs commercial</th></tr></thead><tbody>
           {data.agents.map((a) => { const t = a.personal + a.commercial; return (
             <tr key={a.id} className={isAdmin ? 'click' : ''} onClick={() => isAdmin && setDrill(a.id)}>
               <td><div className="who"><Avatar name={a.name} color={colorFor(a.id)} /><b>{a.name}</b></div></td>
-              <td className="r num">{a.calls}</td><td className="r num">{a.contacts}</td><td className="r num">{a.quotes}</td><td className="r num">{a.sold}</td><td className="r num">{a.conversion}%</td><td className="r num">{money(a.premium)}</td>
+              <td className="r num">{a.calls}</td><td className="r num">{hm(a.talkSec)}</td><td className="r num">{dur(a.avgCallSec)}</td><td className="r num">{a.contacts}</td><td className="r num">{a.quotes}</td><td className="r num">{a.sold}</td><td className="r num">{a.conversion}%</td><td className="r num">{money(a.premium)}</td>
               <td><div className="split" title={`Personal ${money(a.personal)} · Commercial ${money(a.commercial)}`}><i style={{ width: `${pct(a.personal, t || 1)}%`, background: 'var(--s1)' }} /><i style={{ width: `${pct(a.commercial, t || 1)}%`, background: 'var(--s5)' }} /></div>
                 <small className="muted">{t ? (a.personal >= a.commercial ? 'Stronger in personal' : 'Stronger in commercial') : 'No sales'}</small></td>
             </tr>
@@ -91,7 +92,7 @@ function Drill({ agentId, name, months, onBack }: { agentId: string; name: strin
   return (
     <>
       <div className="crumbs" style={{ marginBottom: 10 }}><a onClick={onBack}>Agency</a><Icon name="right" className="sm" /><span>{name}</span><Icon name="right" className="sm" /><span className="faint">select a lead</span></div>
-      {a && <div className="kpis">{([['Premium', kmoney(a.premium)], ['Policies', a.sold], ['Calls', a.calls], ['Contacts', a.contacts], ['Quotes', a.quotes], ['Lead conversion', `${a.conversion}%`]] as const).map(([k, v]) => <div className="kpi" key={k}><div className="eyebrow">{k}</div><b>{v}</b></div>)}</div>}
+      {a && <div className="kpis">{([['Premium', kmoney(a.premium)], ['Policies', a.sold], ['Calls', a.calls], ['Time on calls', hm(a.talkSec)], ['Contacts', a.contacts], ['Quotes', a.quotes], ['Lead conversion', `${a.conversion}%`]] as const).map(([k, v]) => <div className="kpi" key={k}><div className="eyebrow">{k}</div><b>{v}</b></div>)}</div>}
       <section className="panel"><div className="panel-h"><h2>{name}’s leads</h2><button className="btn sm" onClick={onBack}><Icon name="left" className="sm" />Back to agency</button></div>
         <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Lead</th><th>Stage</th><th>Line</th><th>Source</th><th className="r">Attempts</th><th>Last contact</th></tr></thead><tbody>
           {(leads.data ?? []).map((l) => <tr key={l.id} className="click" onClick={() => openLead(l.id)}><td><b>{fullName(l)}</b></td><td><StagePill stage={l.stage} /></td><td>{l.line}</td><td>{l.source}</td><td className="r num">{l.attempts}</td><td>{ago(l.lastContactAt)}</td></tr>)}

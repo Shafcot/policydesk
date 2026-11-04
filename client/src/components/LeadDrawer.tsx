@@ -3,13 +3,14 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { useMe } from '../lib/auth';
-import { RESULTS, STAGES, STG, fullName, type CallResult, type LeadDetail, type Stage } from '../lib/domain';
+import { STAGES, STG, fullName, type CallResult, type LeadDetail, type Stage, MAIN_RESULTS, QUOTE_RESULTS, RES } from '../lib/domain';
 import { ago, dur, fdate, fdateY, fdt, ftime, money, toLocalInput } from '../lib/format';
 import { usePublicSettings, useTeam } from '../lib/hooks';
 import { useToast } from '../lib/toast';
 import { Icon } from './Icon';
 import { Avatar, Pill, ResultPill } from './ui';
 import { WonModal } from './WonModal';
+import { useCalls } from '../lib/calls';
 import { DeleteLeadsModal } from './DeleteLeads';
 import { Composer } from './Composer';
 import { BookModal } from '../pages/Calendar';
@@ -36,6 +37,7 @@ export function LeadDrawer() {
 
 function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
   const { me, isAdmin } = useMe();
+  const calls = useCalls();
   const qc = useQueryClient();
   const toast = useToast();
   const team = useTeam();
@@ -51,7 +53,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
   const patch = useMutation({ mutationFn: (body: object) => api(`/leads/${id}`, { method: 'PATCH', json: body }), onSuccess: refresh, onError: onErr });
   const logCall = useMutation({
     mutationFn: (result: CallResult) => api<{ stage: Stage }>(`/leads/${id}/calls`, { method: 'POST', json: { result } }),
-    onSuccess: (r, result) => { refresh(); if (result === 'sold') setWon(true); else toast(`Logged “${RESULTS.find((x) => x.k === result)!.n}” → ${STG[r.stage].n}`); },
+    onSuccess: (r, result) => { refresh(); if (result === 'sold') setWon(true); else toast(`Logged “${RES[result].n}” → ${STG[r.stage].n}`); },
     onError: onErr,
   });
 
@@ -81,7 +83,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
             : <span>Owned by <b>{l.agentName ?? 'nobody yet'}</b> · last contact {ago(l.lastContactAt)}{l.lastCallByName ? ` by ${l.lastCallByName}` : ''}. Only the owner can call this lead.</span>}
         </div>
         <div className="row">
-          <button className="btn primary" disabled={!canCall || !!l.lockedByName} onClick={() => toast('Live calling connects in Milestone 3 (Twilio). Log the result below for now.', 'phone')}><Icon name="phone" className="sm" />Call {l.phone}</button>
+          <button className="btn primary" disabled={!canCall || !!l.lockedByName || (!!calls.active && calls.active.state !== 'ended')} onClick={() => void calls.callLead(l)}><Icon name="phone" className="sm" />Call {l.phone}</button>
           <button className="btn" onClick={() => setTab('sms')}><Icon name="msg" className="sm" />SMS</button>
           <button className="btn" onClick={() => setTab('email')}><Icon name="mail" className="sm" />Email</button>
           <button className="btn" onClick={() => setBook(true)}><Icon name="calendar" className="sm" />Book</button>
@@ -91,14 +93,22 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
       </div>
       <div className="drawer-b">
         {l.optOut && <div className="optout"><Icon name="alert" className="sm" />Opted out (replied STOP). Removed from all SMS, email and automations.</div>}
+        {l.aiStatus && !l.optOut && <div className="owner-note ai-note"><Icon name="bot" className="sm" />
+          <span>{{ active: `The AI is texting ${l.firstName} (${l.aiTurns} ${l.aiTurns === 1 ? 'reply' : 'replies'}) and will try to book a call.`, booked: 'The AI booked a call with this lead.', handoff: 'The AI handed this conversation to the agent.', stopped: 'AI replies are off for this lead.' }[l.aiStatus]}</span>
+          {canCall && (l.aiStatus === 'active'
+            ? <button className="btn sm" onClick={() => patch.mutate({ aiStatus: 'stopped' })}>Take over</button>
+            : <button className="btn sm ghost" onClick={() => patch.mutate({ aiStatus: null })}>Let the AI reply again</button>)}
+        </div>}
         {flags.length > 0 && <div className="owner-note" style={{ color: 'var(--warn)' }}><Icon name="flag" className="sm" /><span>{flags.join(' · ')}</span></div>}
 
         <section className="panel"><div className="panel-h"><h3>Log call result</h3><small className="muted">Updates the stage automatically</small></div>
-          <div className="panel-b"><div className="result-grid">
-            {RESULTS.map((r) => (
+          <div className="panel-b"><div className="result-grid six">
+            {MAIN_RESULTS.map((r) => (
               <button key={r.k} className="result-btn" style={{ ['--c' as string]: `var(${r.c})` }} disabled={!canCall || logCall.isPending} onClick={() => logCall.mutate(r.k)}>{r.n}</button>
             ))}
-          </div></div></section>
+          </div>
+          <div className="row" style={{ marginTop: 6, gap: 6 }}><small className="muted">Quote stage:</small>{QUOTE_RESULTS.map((r) => <button key={r.k} className="btn sm ghost" disabled={!canCall || logCall.isPending} onClick={() => logCall.mutate(r.k)}>{r.n}</button>)}</div>
+          </div></section>
 
         <section className="panel"><div className="panel-h"><h3>Details</h3></div><div className="panel-b"><div className="kv">
           <div><span>Stage</span>

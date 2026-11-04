@@ -7,6 +7,7 @@ import { ago, daysUntil, ftime, kmoney, money, pct } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { Avatar, Bar, colorFor, Loading, PageHead, Pill } from '../components/ui';
 import { TasksPanel } from '../components/Tasks';
+import { LiveCalls } from '../components/CallBar';
 
 type Dash = {
   kpis: { newLeads: number; contacted: number; quoted: number; won: number; revenue: number; conversion: number };
@@ -18,12 +19,16 @@ type Dash = {
   renewals: (Policy & { customerName: string })[];
   unassigned: { id: string; firstName: string; lastName: string; source: string; line: string; createdAt: string }[];
   callsToday: number;
+  period: { label: string; daysLeft: number };
+  activity: (Activity & { id: string; name: string; status: string })[] | null;
+  myActivity: Activity | null;
 };
+type Activity = { callsToday: number; leadsToday: number; talkToday: number; talkWeek: number; talkMonth: number; callsMonth: number };
+/** 4500 → "1h 15m" */
+const hm = (sec: number) => { const m = Math.round(sec / 60); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
 type QueueItem = { bucket: 'new' | 'callback' | 'followup' | 'retry'; lead: Lead };
 
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; };
-const monthName = () => new Date().toLocaleDateString('en-US', { month: 'long' });
-const daysLeft = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - d.getDate(); };
 
 function useOpenLead() {
   const [, setParams] = useSearchParams();
@@ -73,20 +78,21 @@ function AdminDash({ d }: { d: Dash }) {
       <PageHead title={`Good ${greeting()}, ${me.name.split(' ')[0]}`} sub="Agency overview · last 30 days"
         actions={<><Link className="btn" to="/reports"><Icon name="chart" className="sm" />Reports</Link><Link className="btn primary" to="/leads?tab=intake"><Icon name="inbox" className="sm" />Lead intake</Link></>} />
       <div className="kpis">
-        {([['New leads', d.kpis.newLeads, 'last 30 days'], ['Contacted', d.kpis.contacted, 'reached by phone'], ['Quoted', d.kpis.quoted, 'quotes issued'], ['Won', d.kpis.won, 'policies this month'], ['Revenue', kmoney(d.kpis.revenue), 'written premium MTD'], ['Conversion', `${d.kpis.conversion}%`, 'lead → won']] as const)
+        {([['New leads', d.kpis.newLeads, 'last 30 days'], ['Contacted', d.kpis.contacted, 'reached by phone'], ['Quoted', d.kpis.quoted, 'quotes issued'], ['Won', d.kpis.won, 'policies this target month'], ['Revenue', kmoney(d.kpis.revenue), `written premium · ${d.period.label}`], ['Conversion', `${d.kpis.conversion}%`, 'lead → won']] as const)
           .map(([label, v, s]) => <div className="kpi" key={label}><div className="eyebrow">{label}</div><b>{v}</b><small>{s}</small></div>)}
       </div>
       <div className="grid g-dash">
         <div className="stack">
-          <section className="panel"><div className="panel-h"><h2>Agency target · {monthName()}</h2><Pill color="--s6">{pct(t.achieved, t.team)}% achieved</Pill></div>
+          <section className="panel"><div className="panel-h"><h2>Agency target · {d.period.label}</h2><Pill color="--s6">{pct(t.achieved, t.team)}% achieved</Pill></div>
             <div className="panel-b"><Bar value={pct(t.achieved, t.team)} thick />
-              <div className="target-figs"><div><small className="muted">Target</small><b>{money(t.team)}</b></div><div><small className="muted">Achieved</small><b>{money(t.achieved)}</b></div><div><small className="muted">Remaining</small><b>{money(Math.max(0, t.team - t.achieved))}</b></div><div><small className="muted">Days left</small><b>{daysLeft()}</b></div></div></div></section>
+              <div className="target-figs"><div><small className="muted">Target</small><b>{money(t.team)}</b></div><div><small className="muted">Achieved</small><b>{money(t.achieved)}</b></div><div><small className="muted">Remaining</small><b>{money(Math.max(0, t.team - t.achieved))}</b></div><div><small className="muted">Days left</small><b>{d.period.daysLeft}</b></div></div></div></section>
+          <AgentActivity rows={d.activity ?? []} />
           <div className="grid g2">
             <section className="panel"><div className="panel-h"><h2>Leads by stage</h2><Link className="btn sm ghost" to="/pipeline">Pipeline <Icon name="right" className="sm" /></Link></div>
               <div className="panel-b"><div className="hbars">{STAGES.map((s) => (
                 <div className="hbar" key={s.k}><span className="lbl">{s.n}</span><div className="track"><i style={{ width: `${pct(d.byStage[s.k], maxStage)}%`, ['--c' as string]: `var(${s.c})` }} /></div><span className="num">{d.byStage[s.k]}</span></div>
               ))}</div></div></section>
-            <section className="panel"><div className="panel-h"><h2>Leaderboard</h2><small className="muted">premium MTD</small></div>
+            <section className="panel"><div className="panel-h"><h2>Leaderboard</h2><small className="muted">premium this target month</small></div>
               <div className="panel-b"><div className="list">{lb.map((b, i) => (
                 <div className="li" key={b.id}><span className={`rank ${i === 0 ? 'top' : ''}`}>{i + 1}</span><Avatar name={b.name} color={colorFor(b.id)} />
                   <div className="grow"><b>{b.name}</b><Bar value={pct(b.premium, maxLb)} accent={i === 0} /></div>
@@ -98,6 +104,7 @@ function AdminDash({ d }: { d: Dash }) {
               <tbody>{d.today.map((a) => <TodayRow key={a.id} a={a} showAgent />)}{!d.today.length && <tr><td colSpan={5} className="empty">Nothing scheduled today</td></tr>}</tbody></table></div></section>
         </div>
         <div className="stack">
+          <LiveCalls />
           <section className="panel"><div className="panel-h"><h2>Unassigned leads</h2><span className="badge">{d.unassigned.length}</span></div>
             <div className="panel-b"><p className="muted" style={{ marginBottom: 10 }}>Leads that matched no agent (offline, at limit, or no line match).</p>
               <div className="list">{d.unassigned.slice(0, 5).map((l) => (
@@ -144,7 +151,9 @@ function AgentDash({ d }: { d: Dash }) {
         </div>
         <div className="stack">
           <TasksPanel />
-          <section className="panel"><div className="panel-h"><h2>My target</h2><Pill color="--s6">{pct(t.achieved, t.target)}%</Pill></div>
+          {d.myActivity && <section className="panel"><div className="panel-h"><h2>My time on calls</h2></div>
+            <div className="panel-b"><div className="target-figs"><div><small className="muted">Today</small><b>{hm(d.myActivity.talkToday)}</b></div><div><small className="muted">This week</small><b>{hm(d.myActivity.talkWeek)}</b></div><div><small className="muted">This month</small><b>{hm(d.myActivity.talkMonth)}</b></div><div><small className="muted">Leads called today</small><b>{d.myActivity.leadsToday}</b></div></div></div></section>}
+          <section className="panel"><div className="panel-h"><h2>My target</h2><small className="muted">{d.period.label}</small><Pill color="--s6">{pct(t.achieved, t.target)}%</Pill></div>
             <div className="panel-b"><Bar value={pct(t.achieved, t.target)} thick />
               <div className="target-figs"><div><small className="muted">Target</small><b>{kmoney(t.target)}</b></div><div><small className="muted">Achieved</small><b>{kmoney(t.achieved)}</b></div><div><small className="muted">Remaining</small><b>{kmoney(Math.max(0, t.target - t.achieved))}</b></div><div><small className="muted">Sold</small><b>{t.sold}</b></div></div>
               {d.target && <><div className="sep" /><div className="row between"><small className="muted">Team target</small><small className="num">{kmoney(d.target.achieved)} / {kmoney(d.target.team)}</small></div><Bar value={pct(d.target.achieved, d.target.team)} accent /></>}
@@ -153,5 +162,22 @@ function AgentDash({ d }: { d: Dash }) {
         </div>
       </div>
     </>
+  );
+}
+
+/** Super Admin: who is working — calls made, leads attempted and time on calls (today / week / target month). */
+function AgentActivity({ rows }: { rows: NonNullable<Dash['activity']> }) {
+  const sorted = [...rows].sort((a, b) => b.talkToday - a.talkToday || b.callsToday - a.callsToday);
+  return (
+    <section className="panel"><div className="panel-h"><h2>Agent activity</h2><Link className="btn sm ghost" to="/reports">Reports <Icon name="right" className="sm" /></Link></div>
+      <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Agent</th><th className="r">Calls today</th><th className="r">Leads attempted</th><th className="r">On calls today</th><th className="r">This week</th><th className="r">This month</th></tr></thead>
+        <tbody>{sorted.map((a) => (
+          <tr key={a.id}>
+            <td><div className="who"><span className={`dot ${a.status}`} /><b>{a.name}</b></div></td>
+            <td className="r num">{a.callsToday}</td><td className="r num">{a.leadsToday}</td>
+            <td className="r num"><b>{hm(a.talkToday)}</b></td><td className="r num">{hm(a.talkWeek)}</td><td className="r num">{hm(a.talkMonth)}</td>
+          </tr>
+        ))}{!sorted.length && <tr><td colSpan={6} className="empty">No agents yet</td></tr>}</tbody></table></div>
+    </section>
   );
 }

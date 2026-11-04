@@ -5,101 +5,30 @@ import express, { Router, type Request } from 'express';
 import multer from 'multer';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { agencies, callRecordings, leads, leadSources, users } from '../db/schema.js';
+import { agencies, callRecordings, leads, leadSources, notes, users } from '../db/schema.js';
 import { LINES } from '../domain.js';
 import { ah } from '../lib/http.js';
 import { createLead } from '../routes/leads.js';
 import { receiveReply } from '../services/inbound.js';
+import { getSettings } from '../services/rules.js';
 import { notify } from '../services/rules.js';
 import { attachRecording, updateSmsStatus } from './delivery.js';
 import { last10, toE164 } from './phone.js';
 import { cfg, enabled } from './settings.js';
-import { messagingResponse, requireTwilioSignature, voiceResponse } from './twilio.js';
+import { messagingResponse, requireTwilioSignature } from './twilio.js';
+import { callWebhooks, leadByPhone } from './callflow.js';
 
 export const webhooks = Router();
 type RawReq = Request & { rawBody?: Buffer };
 const form = express.urlencoded({ extended: false });
 const json = express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as RawReq).rawBody = buf; } });
 
-export async function leadByPhone(phone: string, agencyId?: string) {
-  const d = last10(phone);
-  if (d.length < 10) return null;
-  const [l] = await db.select().from(leads).where(and(sql`right(regexp_replace(${leads.phone}, '\\D', '', 'g'), 10) = ${d}`, ...(agencyId ? [eq(leads.agencyId, agencyId)] : []))).orderBy(sql`${leads.updatedAt} desc`).limit(1);
-  return l ?? null;
-}
+export { leadByPhone };
 const defaultAgency = async () => cfg.defaultAgencyId() || (await db.select({ id: agencies.id }).from(agencies).orderBy(agencies.createdAt).limit(1))[0]?.id;
 
-/* ---------------- Twilio voice ---------------- */
+/* ---------------- Twilio voice: see callflow.ts (conference-based calls, phone menu, transfers) ---------------- */
 
-const api = () => cfg.publicApiUrl();
-const recordOpts = () => ({ record: 'record-from-answer-dual' as const, recordingStatusCallback: `${api()}/webhooks/twilio/recording`, recordingStatusCallbackEvent: ['completed' as const] });
-
-/** TwiML App voice URL: the agent's browser dials a lead (param leadId). Ownership is checked again here. */
-webhooks.post('/twilio/voice', form, requireTwilioSignature, ah(async (req, res) => {
-  const vr = voiceResponse();
-  const userId = String(req.body.From ?? '').replace(/^client:/, '');
-  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  const refuse = (msg: string) => { vr.say(msg); vr.hangup(); res.type('text/xml').send(vr.toString()); };
-  if (!user?.active) return refuse('Your account cannot make calls.');
-  // Dial pad: a typed number. If it belongs to a lead, the same ownership rules apply as calling the lead.
-  let lead = req.body.leadId ? await db.query.leads.findFirst({ where: eq(leads.id, String(req.body.leadId)) }) : null;
-  const typed = !req.body.leadId && req.body.to ? toE164(String(req.body.to)) : null;
-  if (!req.body.leadId && !typed) return refuse('That phone number is not valid.');
-  if (typed) lead = await leadByPhone(typed, user.agencyId);
-  if (lead) {
-    const allowed = lead.agencyId === user.agencyId && (user.role === 'admin' || lead.agentId === user.id) && (!lead.lockedById || lead.lockedById === user.id);
-    if (!allowed) return refuse('You can’t call this lead. It belongs to another agent or is on another call.');
-  }
-  const to = typed ?? toE164(lead?.phone);
-  if (!to) return refuse('This lead has no valid phone number.');
-  if (lead) await db.update(leads).set({ lockedById: user.id }).where(eq(leads.id, lead.id));
-  const dial = vr.dial({ callerId: user.twilioNumber || cfg.twilio().callerId, answerOnBridge: true, timeout: 25, ...recordOpts() });
-  // Optional recording notice played to the person called when they answer (two-party-consent states).
-  if (cfg.twilio().recordingNotice) dial.number({ url: `${api()}/webhooks/twilio/notice` }, to); else dial.number(to);
-  res.type('text/xml').send(vr.toString());
-}));
-
-webhooks.post('/twilio/notice', form, requireTwilioSignature, (_req, res) => {
-  const vr = voiceResponse(); vr.say(cfg.twilio().recordingNotice || 'This call may be recorded.');
-  res.type('text/xml').send(vr.toString());
-});
-
-/** Phone number voice URL: inbound call → ring the number's agent, or the lead's owner, in the browser; otherwise voicemail. */
-webhooks.post('/twilio/inbound', form, requireTwilioSignature, ah(async (req, res) => {
-  const vr = voiceResponse();
-  const from = String(req.body.From ?? ''), to = String(req.body.To ?? '');
-  const lineOwner = await db.query.users.findFirst({ where: and(eq(users.twilioNumber, toE164(to) ?? to), eq(users.active, true)) });
-  const lead = await leadByPhone(from, lineOwner?.agencyId);
-  const agentId = lineOwner?.id ?? lead?.agentId ?? null;
-  const agencyId = lineOwner?.agencyId ?? lead?.agencyId ?? (await defaultAgency());
-  if (agencyId) await notify(db, { agencyId, userId: agentId, kind: 'call', text: `Incoming call from ${lead ? `${lead.firstName} ${lead.lastName}` : from}`, leadId: lead?.id ?? null });
-  if (agentId) {
-    const dial = vr.dial({ answerOnBridge: true, timeout: 20, ...recordOpts(), action: `${api()}/webhooks/twilio/inbound-done` });
-    dial.client(agentId);
-  } else {
-    vr.say('Thanks for calling. Please leave a message after the tone.');
-    vr.record({ maxLength: 120, playBeep: true, recordingStatusCallback: `${api()}/webhooks/twilio/voicemail?from=${encodeURIComponent(from)}`, recordingStatusCallbackEvent: ['completed'] });
-  }
-  res.type('text/xml').send(vr.toString());
-}));
-
-/** After an inbound <Dial>: if nobody answered, take a voicemail. */
-webhooks.post('/twilio/inbound-done', form, requireTwilioSignature, (req, res) => {
-  const vr = voiceResponse();
-  if (req.body.DialCallStatus !== 'completed') {
-    vr.say('Sorry we missed you. Please leave a message after the tone.');
-    vr.record({ maxLength: 120, playBeep: true, recordingStatusCallback: `${api()}/webhooks/twilio/voicemail?from=${encodeURIComponent(String(req.body.From ?? ''))}`, recordingStatusCallbackEvent: ['completed'] });
-  }
-  res.type('text/xml').send(vr.toString());
-});
-
-webhooks.post('/twilio/voicemail', form, requireTwilioSignature, ah(async (req, res) => {
-  const from = String(req.query.from ?? req.body.From ?? '');
-  const lead = await leadByPhone(from);
-  const agencyId = lead?.agencyId ?? (await defaultAgency());
-  if (agencyId) await notify(db, { agencyId, userId: lead?.agentId ?? null, kind: 'call', text: `New voicemail from ${lead ? `${lead.firstName} ${lead.lastName}` : from} (${req.body.RecordingDuration ?? '?'}s)`, leadId: lead?.id ?? null });
-  res.sendStatus(204);
-}));
+webhooks.use('/twilio', callWebhooks);
 
 /** Recording finished → store it and link it to the logged call (matched on CallSid). */
 webhooks.post('/twilio/recording', form, requireTwilioSignature, ah(async (req, res) => {
@@ -145,12 +74,30 @@ async function intake(agencyId: string, source: string, l: LeadIn) {
   if (!l.phone || last10(l.phone).length < 10) return { ok: false as const, reason: 'missing phone' };
   if (await leadByPhone(l.phone, agencyId)) return { ok: true as const, duplicate: true };
   const lead = await createLead(agencyId, { firstName: (l.firstName || 'Unknown').slice(0, 80), lastName: (l.lastName || '-').slice(0, 80), phone: l.phone, email: l.email && /@/.test(l.email) ? l.email : '', company: l.company, line: pickLine(l.line) as (typeof LINES)[number], source });
-  const custom = { ...(l.zip ? { zip: l.zip } : {}), ...(l.extra ?? {}) };
+  // Extra form questions fill the agency's custom fields (matched by key, label or a common alias); the rest go in a note.
+  const st = await getSettings(agencyId);
+  const custom: Record<string, string> = l.zip ? { zip: l.zip } : {};
+  const leftovers: string[] = [];
+  for (const [k, v] of Object.entries(l.extra ?? {})) {
+    const key = matchCustomField(k, st.customFields);
+    if (key) custom[key] = v; else leftovers.push(`${k.replace(/_/g, ' ')}: ${v}`);
+  }
   if (Object.keys(custom).length) await db.update(leads).set({ custom }).where(eq(leads.id, lead.id));
+  if (leftovers.length) await db.insert(notes).values({ leadId: lead.id, body: `Form answers from ${source}:\n${leftovers.join('\n')}` });
   return { ok: true as const, id: lead.id };
 }
 
-/** Normalises common field names from vendors and website forms. */
+const norm = (k: string) => k.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+const ALIASES: Record<string, string> = { date_of_birth: 'dob', birthdate: 'dob', birth_date: 'dob', birthday: 'dob', current_carrier: 'carrier', current_insurance: 'carrier', current_insurer: 'carrier', insurance_company: 'carrier', current_insurance_company: 'carrier', postal_code: 'zip', zip_code: 'zip', zipcode: 'zip' };
+/** Which custom field a form question fills, if any. */
+function matchCustomField(question: string, fields: { key: string; label: string }[]) {
+  const n = norm(question);
+  const want = ALIASES[n] ?? n;
+  return fields.find((f) => f.key === want || norm(f.label) === n || norm(f.label) === want)?.key ?? null;
+}
+const KNOWN = new Set(['full_name', 'fullname', 'name', 'first_name', 'firstname', 'fname', 'last_name', 'lastname', 'lname', 'phone', 'phone_number', 'phonenumber', 'mobile', 'cell', 'email', 'email_address', 'emailaddress', 'company', 'company_name', 'business_name', 'line', 'product', 'insurance_type', 'coverage', 'lob', 'zip', 'zip_code', 'postal_code', 'zipcode', 'google_key', 'key', 'source']);
+
+/** Normalises common field names from vendors and website forms. Anything else becomes `extra` (custom fields / note). */
 function fromFields(f: Record<string, unknown>): LeadIn {
   const g = (...keys: string[]) => { for (const k of keys) { const v = f[k] ?? f[k.toLowerCase()]; if (v !== undefined && v !== null && String(v).trim()) return String(v).trim(); } return ''; };
   const full = g('full_name', 'fullName', 'name');
@@ -159,6 +106,7 @@ function fromFields(f: Record<string, unknown>): LeadIn {
     firstName: g('first_name', 'firstName', 'fname') || fn || '', lastName: g('last_name', 'lastName', 'lname') || ln.join(' '),
     phone: g('phone', 'phone_number', 'phoneNumber', 'mobile', 'cell'), email: g('email', 'email_address', 'emailAddress'),
     company: g('company', 'company_name', 'business_name'), line: g('line', 'product', 'insurance_type', 'coverage', 'lob'), zip: g('zip', 'zip_code', 'postal_code', 'zipcode'),
+    extra: Object.fromEntries(Object.entries(f).filter(([k, v]) => !KNOWN.has(norm(k)) && v !== null && v !== undefined && typeof v !== 'object' && String(v).trim()).map(([k, v]) => [k, String(v).trim().slice(0, 500)]).slice(0, 40)),
   };
 }
 
@@ -202,11 +150,14 @@ webhooks.post('/facebook', json, ah(async (req, res) => {
 webhooks.post('/google-ads', json, ah(async (req, res) => {
   const b = req.body ?? {};
   if (!enabled.googleAds() || b.google_key !== cfg.googleAds().webhookKey) return res.sendStatus(403);
-  const col = Object.fromEntries(((b.user_column_data ?? []) as { column_id: string; string_value: string }[]).map((c) => [c.column_id, c.string_value]));
+  const cols = (b.user_column_data ?? []) as { column_id: string; column_name?: string; string_value: string }[];
+  const col = Object.fromEntries(cols.map((c) => [c.column_id, c.string_value]));
+  const standard = new Set(['FULL_NAME', 'FIRST_NAME', 'LAST_NAME', 'PHONE_NUMBER', 'EMAIL', 'POSTAL_CODE', 'COMPANY_NAME']);
+  const extra = Object.fromEntries(cols.filter((c) => !standard.has(c.column_id) && c.string_value).map((c) => [c.column_name || c.column_id, c.string_value]));
   const agencyId = await defaultAgency();
   if (!agencyId || b.is_test) return res.json({ ok: true, test: !!b.is_test });
   const [fn, ...ln] = String(col.FULL_NAME ?? '').split(/\s+/);
-  const r = await intake(agencyId, 'Google Ads', { firstName: col.FIRST_NAME ?? fn ?? '', lastName: col.LAST_NAME ?? ln.join(' '), phone: col.PHONE_NUMBER ?? '', email: col.EMAIL, zip: col.POSTAL_CODE, company: col.COMPANY_NAME });
+  const r = await intake(agencyId, 'Google Ads', { firstName: col.FIRST_NAME ?? fn ?? '', lastName: col.LAST_NAME ?? ln.join(' '), phone: col.PHONE_NUMBER ?? '', email: col.EMAIL, zip: col.POSTAL_CODE, company: col.COMPANY_NAME, extra });
   res.status(r.ok ? 200 : 400).json(r);
 }));
 

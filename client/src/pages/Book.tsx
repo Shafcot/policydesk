@@ -165,7 +165,7 @@ export function Sales() {
   );
 }
 
-type Targets = { team: { target: number; achieved: number } | null; teamTargetVisible: boolean; agents: { id: string; name: string; target: number; achieved: number; sold: number }[] };
+type Targets = { team: { target: number; achieved: number } | null; agentTargetsVisible: boolean; period: { label: string; daysLeft: number }; agents: { id: string; name: string; target: number; achieved: number; sold: number }[] };
 
 export function TargetsPage() {
   const { isAdmin } = useMe();
@@ -178,17 +178,16 @@ export function TargetsPage() {
     onError: (e) => toast(e instanceof ApiError ? e.message : 'Could not save', 'alert'),
   });
   if (!data) return <Loading />;
-  const month = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const Figs = ({ t, a }: { t: number; a: number }) => <div className="target-figs"><div><small className="muted">Total</small><b>{money(t)}</b></div><div><small className="muted">Achieved</small><b>{money(a)}</b></div><div><small className="muted">Remaining</small><b>{money(Math.max(0, t - a))}</b></div><div><small className="muted">Progress</small><b>{pct(a, t)}%</b></div></div>;
   return (
     <>
-      <PageHead title="Targets" sub={`Monthly written-premium targets · ${month}`}
-        actions={isAdmin && <label className="check"><input type="checkbox" checked={data.teamTargetVisible} onChange={(e) => save.mutate({ path: '/admin/settings', json: { settings: { teamTargetVisible: e.target.checked } } })} />Agents can see the team target</label>} />
+      <PageHead title="Targets" sub={`Written-premium targets · ${data.period.label} · ${data.period.daysLeft} days left`}
+        actions={isAdmin && <label className="check"><input type="checkbox" checked={data.agentTargetsVisible} onChange={(e) => save.mutate({ path: '/admin/settings', json: { settings: { agentTargetsVisible: e.target.checked } } })} />Agents can see each other’s targets</label>} />
       <div className="stack">
         {data.team && <section className="panel"><div className="panel-h"><h2>Team target</h2>
           {isAdmin && <div className="row"><label className="lbl-sm" htmlFor="team-t">Monthly target $</label><input id="team-t" className="input num" type="number" style={{ width: 140 }} defaultValue={data.team.target} onBlur={(e) => Number(e.target.value) !== data.team!.target && save.mutate({ path: '/admin/settings', json: { settings: { teamTarget: Number(e.target.value) } } })} /></div>}</div>
           <div className="panel-b"><Bar value={pct(data.team.achieved, data.team.target)} thick /><Figs t={data.team.target} a={data.team.achieved} /></div></section>}
-        <section className="panel"><div className="panel-h"><h2>{isAdmin ? 'Agent targets' : 'My target'}</h2></div><div className="tbl-wrap"><table className="tbl"><thead><tr><th>Agent</th><th>Target</th><th className="r">Achieved</th><th className="r">Remaining</th><th style={{ width: '30%' }}>Progress</th></tr></thead><tbody>
+        <section className="panel"><div className="panel-h"><h2>{isAdmin || data.agents.length > 1 ? 'Agent targets' : 'My target'}</h2></div><div className="tbl-wrap"><table className="tbl"><thead><tr><th>Agent</th><th>Target</th><th className="r">Achieved</th><th className="r">Remaining</th><th style={{ width: '30%' }}>Progress</th></tr></thead><tbody>
           {data.agents.map((a) => (
             <tr key={a.id}><td><div className="who"><Avatar name={a.name} color={colorFor(a.id)} /><b>{a.name}</b></div></td>
               <td>{isAdmin ? <input className="input num" type="number" style={{ width: 120 }} defaultValue={a.target} aria-label={`${a.name} target`} onBlur={(e) => Number(e.target.value) !== a.target && save.mutate({ path: `/admin/users/${a.id}`, json: { monthlyTarget: Number(e.target.value) } })} /> : <span className="num">{money(a.target)}</span>}</td>
@@ -196,8 +195,7 @@ export function TargetsPage() {
               <td><div className="row" style={{ flexWrap: 'nowrap' }}><Bar value={pct(a.achieved, a.target)} /><span className="num" style={{ width: 42, textAlign: 'right' }}>{pct(a.achieved, a.target)}%</span></div></td></tr>
           ))}
         </tbody></table></div></section>
-        {!isAdmin && !data.team && <p className="help">Your Super Admin has hidden the team target.</p>}
-        <p className="help">Achieved = written premium from sales this month ({kmoney(data.agents.reduce((s, a) => s + a.achieved, 0))} across {isAdmin ? 'the team' : 'your sales'}).</p>
+        <p className="help">Achieved = written premium from sales in this target month ({kmoney(data.agents.reduce((s, a) => s + a.achieved, 0))} across {isAdmin ? 'the team' : 'your sales'}).</p>
       </div>
     </>
   );
