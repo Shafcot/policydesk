@@ -104,6 +104,11 @@ export const leads = pgTable('leads', {
   /** AI texting conversation: null = none, 'active' = AI is replying, 'booked' | 'handoff' | 'stopped' = finished. */
   aiStatus: varchar('ai_status', { length: 12 }),
   aiTurns: integer('ai_turns').notNull().default(0),
+  /** Bad lead: 'bad_number' | 'unreachable' | 'dns' (Do Not Solicit) | 'dnc' (Do Not Call); null = fine. */
+  badReason: varchar('bad_reason', { length: 16 }),
+  badAt: ts('bad_at'),
+  /** Who marked it; null when the system flagged it (failed number, too many unanswered attempts). */
+  badById: uuid('bad_by_id').references(() => users.id, { onDelete: 'set null' }),
   custom: jsonb('custom').$type<Record<string, string>>().notNull().default({}),
   createdAt: createdAt(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
@@ -112,6 +117,7 @@ export const leads = pgTable('leads', {
   index('leads_agent_idx').on(t.agentId),
   index('leads_phone_idx').on(t.phone),
   index('leads_created_idx').on(t.createdAt),
+  index('leads_bad_idx').on(t.agencyId, t.badReason),
 ]);
 
 export const calls = pgTable('calls', {

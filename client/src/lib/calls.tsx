@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Call, Device } from '@twilio/voice-sdk';
 import { api, ApiError } from './api';
 import { useAuth } from './auth';
-import { fullName, type CallResult, type Lead, type Stage } from './domain';
+import { BAD, fullName, type BadReason, type CallResult, type Lead, type Stage } from './domain';
 import { useLiveEvent } from './live';
 import { useToast } from './toast';
 
@@ -55,7 +55,8 @@ type Ctx = {
   hangUp: () => void;
   toggleMute: () => void;
   sendDigits: (d: string) => void;
-  logResult: (r: CallResult) => Promise<void>;
+  /** Logs the call; `bad` also marks the lead as a bad lead (bad number, unreachable, DNS, DNC). */
+  logResult: (r: CallResult, bad?: BadReason) => Promise<void>;
   attachLead: (l: Lead) => void;
   dismiss: () => void;
   endManual: () => void;
@@ -242,7 +243,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     return a?.startedAt ? ((a.endedAt ?? Date.now()) - a.startedAt) / 1000 : 0;
   }, []);
 
-  const logResult = useCallback(async (result: CallResult) => {
+  const logResult = useCallback(async (result: CallResult, bad?: BadReason) => {
     const a = activeRef.current;
     if (!a?.lead) return;
     if (a.state !== 'ended' && !a.handedOff) { callRef.current?.disconnect(); }
@@ -252,8 +253,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
         result, durationSec: Math.round(elapsed()), notes: note.trim() || undefined,
         ...(a.liveCallId ? { liveCallId: a.liveCallId } : callSid ? { callSid } : {}),
       } });
+      if (bad) await api(`/leads/${a.lead.id}`, { method: 'PATCH', json: { badReason: bad } });
       ['queue', 'dashboard', 'leads', 'lead'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-      if (result === 'sold') { setWon(l); setAuto(false); } else toast(`${fullName(l)} → ${l.stage.replace('_', ' ')}`);
+      if (result === 'sold') { setWon(l); setAuto(false); } else toast(bad ? `${fullName(l)} marked as ${BAD[bad].n}` : `${fullName(l)} → ${l.stage.replace('_', ' ')}`);
       reset();
     } catch (e) { toast(err(e), 'alert'); }
   }, [elapsed, note, qc, reset, toast]);

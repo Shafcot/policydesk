@@ -12,6 +12,7 @@ import { LeadDrawer } from './LeadDrawer';
 import { useTeam } from '../lib/hooks';
 import { useLiveUpdates } from '../lib/live';
 import { CallProvider } from '../lib/calls';
+import { useTheme } from '../lib/theme';
 import { CallBar, IncomingCall } from './CallBar';
 import { enablePush, loadPushConfig, pushAvailable } from '../lib/push';
 import { NewLeadModal } from './NewLeadModal';
@@ -40,6 +41,7 @@ const NAV: [string, NavItem[]][] = [
   ['Admin', [
     { to: '/users', label: 'Users', icon: 'userplus', admin: true },
     { to: '/numbers', label: 'Phone numbers', icon: 'phone', admin: true },
+    { to: '/bad-leads', label: 'Bad leads', icon: 'flag', admin: true },
     { to: '/settings', label: 'Settings', icon: 'sliders', admin: true },
   ]],
 ];
@@ -95,6 +97,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [speed, setSpeed] = useState(false);
+  const themeCtl = useTheme();
   const [pushOk, setPushOk] = useState(false);
   useEffect(() => { loadPushConfig().then(() => setPushOk(pushAvailable())); }, []);
   const prefs = useMutation({ mutationFn: (v: boolean) => api<User>('/users/me/prefs', { method: 'PATCH', json: { notifyByEmail: v } }), onSuccess: (u) => setUser({ ...me, ...u }) });
@@ -113,6 +116,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
       <GlobalSearch />
       <div className="top-actions">
         <button className="btn primary" onClick={() => setNewLead(true)}><Icon name="plus" className="sm" /><span className="hide-sm">New lead</span></button>
+        <button className="icon-btn theme-toggle" onClick={themeCtl.toggle} title={themeCtl.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} aria-label={themeCtl.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}><Icon name={themeCtl.theme === 'dark' ? 'sun' : 'moon'} /></button>
         <button className="icon-btn" title="Speed dial" aria-label="Speed dial" onClick={() => setSpeed(true)}><Icon name="grid" /></button>
         <div style={{ position: 'relative' }}>
           <button className="icon-btn" onClick={() => setNotifOpen((o) => !o)} aria-label="Notifications"><Icon name="bell" />{unread > 0 && <span className="count">{unread}</span>}</button>

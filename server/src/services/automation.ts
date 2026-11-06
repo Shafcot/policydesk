@@ -29,6 +29,8 @@ export type TriggerContext = {
 export async function fire(x: Exec, trigger: Trigger, ctx: TriggerContext) {
   const list = await x.query.automations.findMany({ where: and(eq(automations.agencyId, ctx.agencyId), eq(automations.trigger, trigger), eq(automations.active, true)) });
   const started: string[] = [];
+  // Bad leads (bad number, unreachable, DNS, DNC) never start a flow.
+  if (list.length && ctx.leadId && (await x.query.leads.findFirst({ where: eq(leads.id, ctx.leadId), columns: { badReason: true } }))?.badReason) return started;
   for (const a of list) {
     const cfg = a.triggerConfig;
     if (trigger === 'stage_change' && cfg.stages?.length && (!ctx.stage || !cfg.stages.includes(ctx.stage))) continue;
@@ -48,8 +50,8 @@ export async function fire(x: Exec, trigger: Trigger, ctx: TriggerContext) {
   return started;
 }
 
-type StopReason = 'reply' | 'booking' | 'won_lost' | 'opt_out' | 'manual';
-const FLAG: Record<StopReason, keyof Automation | null> = { reply: 'stopOnReply', booking: 'stopOnBooking', won_lost: 'stopOnWonLost', opt_out: null, manual: null };
+type StopReason = 'reply' | 'booking' | 'won_lost' | 'opt_out' | 'manual' | 'bad_lead';
+const FLAG: Record<StopReason, keyof Automation | null> = { reply: 'stopOnReply', booking: 'stopOnBooking', won_lost: 'stopOnWonLost', opt_out: null, manual: null, bad_lead: null };
 
 /** Stops a lead's active runs whose automation is set to stop on this event (opt-out and manual stop all). */
 export async function stopRuns(x: Exec, leadId: string, reason: StopReason) {
@@ -83,7 +85,7 @@ async function evaluate(x: Exec, run: AutomationRun, c: ConditionKind): Promise<
       return !reply;
     }
     // Nobody has spoken with the lead yet (new / contact attempted / recycled).
-    case 'not_reached': return !!lead && ['new', 'attempted', 'recycled'].includes(lead.stage) && !lead.optOut;
+    case 'not_reached': return !!lead && ['new', 'attempted', 'recycled'].includes(lead.stage) && !lead.optOut && !lead.badReason;
     case 'is_commercial': return lead?.type === 'commercial';
     case 'is_personal': return lead?.type === 'personal';
   }

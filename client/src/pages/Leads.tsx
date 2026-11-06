@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, qs } from '../lib/api';
 import { useMe } from '../lib/auth';
-import { LINES, STAGES, STG, fullName, type Lead, type Stage } from '../lib/domain';
+import { BAD, BAD_REASONS, LINES, STAGES, STG, fullName, isBlockingBad, type BadReason, type Lead, type Stage } from '../lib/domain';
 import { ago, fdt } from '../lib/format';
 import { useLookups, useTeam } from '../lib/hooks';
 import { useToast } from '../lib/toast';
@@ -13,12 +13,12 @@ import { NewLeadModal } from '../components/NewLeadModal';
 import { ImportLeads } from '../components/ImportLeads';
 import { DeleteLeadsModal } from '../components/DeleteLeads';
 
-type Filters = { q: string; stage: string; source: string; agent: string; line: string; type: string; days: string };
-const EMPTY: Filters = { q: '', stage: '', source: '', agent: '', line: '', type: '', days: '' };
+type Filters = { q: string; stage: string; source: string; agent: string; line: string; type: string; days: string; bad: string };
+const EMPTY: Filters = { q: '', stage: '', source: '', agent: '', line: '', type: '', days: '', bad: '' };
 
 function exportCsv(rows: Lead[], team: Map<string, string>) {
-  const head = ['Name', 'Company', 'Phone', 'Email', 'Stage', 'Source', 'Line', 'Type', 'Agent', 'Created', 'Last contact', 'Attempts'];
-  const lines = rows.map((l) => [fullName(l), l.company, l.phone, l.email, STG[l.stage].n, l.source, l.line, l.type, l.agentId ? team.get(l.agentId) : 'Unassigned', l.createdAt.slice(0, 10), l.lastContactAt?.slice(0, 10), l.attempts]);
+  const head = ['Name', 'Company', 'Phone', 'Email', 'Stage', 'Source', 'Line', 'Type', 'Agent', 'Created', 'Last contact', 'Attempts', 'Bad lead'];
+  const lines = rows.map((l) => [fullName(l), l.company, l.phone, l.email, STG[l.stage].n, l.source, l.line, l.type, l.agentId ? team.get(l.agentId) : 'Unassigned', l.createdAt.slice(0, 10), l.lastContactAt?.slice(0, 10), l.attempts, l.badReason ? BAD[l.badReason].n : '']);
   const csv = [head, ...lines].map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -30,7 +30,8 @@ export function Leads() {
   const { isAdmin } = useMe();
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') === 'intake' ? 'intake' : 'all';
-  const [f, setF] = useState<Filters>(EMPTY);
+  // ?bad=<reason> opens the list already filtered (links from the Bad leads report).
+  const [f, setF] = useState<Filters>(() => ({ ...EMPTY, bad: params.get('bad') ?? '', source: params.get('source') ?? '' }));
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [newLead, setNewLead] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -53,7 +54,8 @@ export function Leads() {
 
   const done = (msg: string) => { setSel(new Set()); qc.invalidateQueries({ queryKey: ['leads'] }); qc.invalidateQueries({ queryKey: ['dashboard'] }); toast(msg); };
   const onErr = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Something went wrong', 'alert');
-  const bulk = useMutation({ mutationFn: (body: { agentId?: string; stage?: Stage }) => api<{ updated: number }>('/leads/bulk', { method: 'POST', json: { ids: [...sel], ...body } }), onSuccess: (r, b) => done(`${r.updated} leads ${b.agentId ? `assigned to ${names.get(b.agentId)}` : `moved to ${STG[b.stage!].n}`}`), onError: onErr });
+  const bulk = useMutation({ mutationFn: (body: { agentId?: string; stage?: Stage; badReason?: BadReason | null }) => api<{ updated: number }>('/leads/bulk', { method: 'POST', json: { ids: [...sel], ...body } }),
+    onSuccess: (r, b) => done(`${r.updated} ${r.updated === 1 ? 'lead' : 'leads'} ${b.agentId ? `assigned to ${names.get(b.agentId)}` : b.stage ? `moved to ${STG[b.stage].n}` : b.badReason ? `marked as ${BAD[b.badReason].n}` : 'cleared of the bad-lead flag'}`), onError: onErr });
   const assignOne = useMutation({ mutationFn: ({ id, agentId }: { id: string; agentId: string | null }) => api(`/leads/${id}`, { method: 'PATCH', json: { agentId } }), onSuccess: (_r, v) => done(v.agentId ? `Assigned to ${names.get(v.agentId)}` : 'Lead unassigned'), onError: onErr });
 
   const set = (k: keyof Filters) => (e: { target: { value: string } }) => { setF({ ...f, [k]: e.target.value }); setSel(new Set()); };
@@ -78,11 +80,13 @@ export function Leads() {
         <select className="input" value={f.line} onChange={set('line')} aria-label="Line"><option value="">All lines</option>{LINES.map((l) => <option key={l}>{l}</option>)}</select>
         <select className="input" value={f.type} onChange={set('type')} aria-label="Type"><option value="">Personal & commercial</option><option value="personal">Personal</option><option value="commercial">Commercial</option></select>
         <select className="input" value={f.days} onChange={set('days')} aria-label="Date"><option value="">Any date</option><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select>
+        <select className="input" value={f.bad} onChange={set('bad')} aria-label="Bad leads"><option value="">Good & bad leads</option><option value="none">Hide bad leads</option><option value="any">All bad leads</option>{BAD_REASONS.map((r) => <option key={r.k} value={r.k}>Bad: {r.n}</option>)}</select>
       </div>
       {isAdmin && sel.size > 0 && (
         <div className="bulk"><b>{sel.size} selected</b>
           <select value="" onChange={(e) => e.target.value && bulk.mutate({ agentId: e.target.value })} aria-label="Assign to"><option value="">Assign to…</option>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
           <select value="" onChange={(e) => e.target.value && bulk.mutate({ stage: e.target.value as Stage })} aria-label="Change stage"><option value="">Change stage…</option>{STAGES.filter((s) => s.k !== 'won').map((s) => <option key={s.k} value={s.k}>{s.n}</option>)}</select>
+          <select value="" onChange={(e) => { const v = e.target.value; if (!v) return; if (v === 'clear') bulk.mutate({ badReason: null }); else if (!isBlockingBad(v as BadReason) || window.confirm(`Mark ${sel.size} leads as ${BAD[v as BadReason].n}? Calls, texts and emails to them will be blocked.`)) bulk.mutate({ badReason: v as BadReason }); }} aria-label="Mark as bad lead"><option value="">Mark as bad…</option>{BAD_REASONS.map((r) => <option key={r.k} value={r.k}>{r.n}</option>)}<option value="clear">Clear bad-lead flag</option></select>
           <button className="btn sm" onClick={() => exportCsv(rows.filter((r) => sel.has(r.id)), names)}><Icon name="download" className="sm" />Export</button>
           <button className="btn sm danger" onClick={() => setDeleting(true)}><Icon name="trash" className="sm" />Delete</button>
           <button className="btn sm" onClick={() => setSel(new Set())}>Clear</button>
@@ -114,7 +118,7 @@ export function Leads() {
                 </td>
                 <td className="muted">{tab === 'intake' ? ago(l.createdAt) : ago(l.lastContactAt)}</td>
                 <td style={overdue ? { color: 'var(--bad)', fontWeight: 600 } : undefined} className={overdue ? '' : 'muted'}>{['won', 'lost', 'recycled'].includes(l.stage) ? '—' : fdt(l.followUpAt)}</td>
-                <td>{(l.flags ?? []).map((x) => <Pill key={x} color="--warn">{x === 'duplicate' ? 'Duplicate' : 'No email'}</Pill>)}</td>
+                <td><div className="row" style={{ gap: 4 }}>{l.badReason && <Pill color={BAD[l.badReason].c}>{BAD[l.badReason].n}</Pill>}{(l.flags ?? []).map((x) => <Pill key={x} color="--warn">{x === 'duplicate' ? 'Duplicate' : 'No email'}</Pill>)}</div></td>
                 {isAdmin && <td className="r" onClick={(e) => e.stopPropagation()}><button className="icon-btn sm danger-icon" onClick={() => setDeleteOne({ id: l.id, name: fullName(l) })} aria-label={`Delete ${fullName(l)}`} title="Delete lead"><Icon name="trash" className="sm" /></button></td>}
               </tr>
             );

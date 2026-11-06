@@ -1,11 +1,11 @@
 // Super Admin: users (invite / edit / remove), agency settings, lead sources, message templates.
 import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
-import { and, eq } from 'drizzle-orm';
+import { aliasedTable, and, desc, eq, gte, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { agencies, leads, leadSources, templates, users } from '../db/schema.js';
-import { DEFAULT_SETTINGS, LINES } from '../domain.js';
+import { BAD_REASONS, DEFAULT_SETTINGS, LINES } from '../domain.js';
 import { toE164 } from '../integrations/phone.js';
 import { env } from '../config.js';
 import { ah, badRequest, notFound } from '../lib/http.js';
@@ -158,3 +158,51 @@ adminRouter.delete('/templates/:id', ah<AuthedRequest>(async (req, res) => {
   res.json({ ok: true });
 }));
 
+
+/* ---------- bad leads report (bad number / unreachable / Do Not Solicit / Do Not Call) ---------- */
+
+adminRouter.get('/bad-leads', ah<AuthedRequest>(async (req, res) => {
+  const f = z.object({
+    days: z.coerce.number().int().min(1).max(3650).optional(), // flagged within the last N days; none = all time
+    reason: z.enum(BAD_REASONS).optional(),
+    source: z.string().max(80).optional(),
+  }).parse(req.query);
+  const where: SQL[] = [eq(leads.agencyId, req.user.agencyId), isNotNull(leads.badReason)];
+  if (f.days) where.push(gte(leads.badAt, new Date(Date.now() - f.days * 864e5)));
+  if (f.source) where.push(eq(leads.source, f.source));
+  const base = and(...where);
+  const listWhere = f.reason ? and(base, eq(leads.badReason, f.reason)) : base;
+  const owner = aliasedTable(users, 'owner');
+  const marker = aliasedTable(users, 'marker');
+  const n = sql<number>`count(*)::int`;
+  const [byReason, bySource, byAgent, totals, rows] = await Promise.all([
+    db.select({ reason: leads.badReason, n }).from(leads).where(base).groupBy(leads.badReason),
+    db.select({ source: leads.source, reason: leads.badReason, n }).from(leads).where(base).groupBy(leads.source, leads.badReason),
+    db.select({ agentId: leads.agentId, agentName: owner.name, reason: leads.badReason, n }).from(leads).leftJoin(owner, eq(leads.agentId, owner.id)).where(base).groupBy(leads.agentId, owner.name, leads.badReason),
+    // Share of all leads per source, so admins can see which vendor sends the most bad leads.
+    db.select({ source: leads.source, n }).from(leads).where(and(eq(leads.agencyId, req.user.agencyId), ...(f.days ? [gte(leads.createdAt, new Date(Date.now() - f.days * 864e5))] : []))).groupBy(leads.source),
+    db.select({
+      id: leads.id, firstName: leads.firstName, lastName: leads.lastName, phone: leads.phone, email: leads.email, source: leads.source,
+      stage: leads.stage, attempts: leads.attempts, badReason: leads.badReason, badAt: leads.badAt, createdAt: leads.createdAt,
+      agentName: owner.name, markedBy: marker.name,
+    }).from(leads).leftJoin(owner, eq(leads.agentId, owner.id)).leftJoin(marker, eq(leads.badById, marker.id))
+      .where(listWhere).orderBy(desc(leads.badAt)).limit(2000),
+  ]);
+  const pivot = <K extends string>(list: { reason: string | null; n: number }[], key: (r: never) => K) => {
+    const m = new Map<K, Record<string, number>>();
+    for (const r of list) { const k = key(r as never); const o = m.get(k) ?? {}; o[r.reason!] = (o[r.reason!] ?? 0) + r.n; m.set(k, o); }
+    return m;
+  };
+  const srcMap = pivot(bySource, (r: { source: string }) => r.source);
+  const agentMap = pivot(byAgent, (r: { agentId: string | null }) => r.agentId ?? 'none');
+  const agentNames = new Map(byAgent.map((r) => [r.agentId ?? 'none', r.agentName ?? 'Unassigned']));
+  const totalBySource = new Map(totals.map((t) => [t.source, t.n]));
+  const sum = (o: Record<string, number>) => Object.values(o).reduce((a, b) => a + b, 0);
+  res.json({
+    counts: Object.fromEntries(BAD_REASONS.map((r) => [r, byReason.find((x) => x.reason === r)?.n ?? 0])),
+    total: byReason.reduce((a, b) => a + b.n, 0),
+    bySource: [...srcMap].map(([source, c]) => ({ source, counts: c, bad: sum(c), leads: totalBySource.get(source) ?? sum(c) })).sort((a, b) => b.bad - a.bad),
+    byAgent: [...agentMap].map(([agentId, c]) => ({ agentId: agentId === 'none' ? null : agentId, agentName: agentNames.get(agentId)!, counts: c, bad: sum(c) })).sort((a, b) => b.bad - a.bad),
+    leads: rows,
+  });
+}));

@@ -18,6 +18,7 @@ import { bookingUrl, queueMessage } from '../services/messaging.js';
 import { attachRecording } from './delivery.js';
 import { last10, toE164 } from './phone.js';
 import { cfg } from './settings.js';
+import { flagDeadNumber, isDeadNumber } from '../services/badleads.js';
 import { requireTwilioSignature, twilioClient, voiceResponse } from './twilio.js';
 
 export const callWebhooks = Router();
@@ -139,7 +140,11 @@ callWebhooks.post('/customer-status', form, requireTwilioSignature, ah(async (re
   const st = String(req.body.CallStatus ?? '');
   if (st === 'ringing') await push(c, 'ringing');
   else if (st === 'in-progress') await push(await patchLive(c.id, { status: 'active', answeredAt: new Date() }), 'connected');
-  else if (['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(st)) await endRoom(c, c.answeredAt ? 'completed' : st);
+  else if (['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(st)) {
+    await endRoom(c, c.answeredAt ? 'completed' : st);
+    // The carrier says the number doesn't exist / isn't in service → Bad number.
+    if (st === 'failed' && c.leadId && isDeadNumber(req.body)) await flagDeadNumber(c.leadId);
+  }
   res.sendStatus(204);
 }));
 

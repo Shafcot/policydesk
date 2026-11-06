@@ -1,9 +1,10 @@
 import { Router } from 'express';
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { appointments, calls, customers, leads, liveCalls, messages, notes, policies, users } from '../db/schema.js';
-import { CALL_RESULTS, LINES, STAGES, lineType } from '../domain.js';
+import { BAD_REASONS, CALL_RESULTS, LINES, STAGES, lineType } from '../domain.js';
+import { markBad } from '../services/badleads.js';
 import { ah, badRequest, forbidden } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { assertCanCall, getVisibleLead, leadScope } from '../services/scope.js';
@@ -23,6 +24,8 @@ const ListQuery = z.object({
   type: z.enum(['personal', 'commercial']).optional(),
   days: z.coerce.number().int().positive().optional(),
   intake: z.coerce.boolean().optional(),
+  /** Bad-lead filter: one reason, 'any' (all bad leads) or 'none' (hide bad leads). */
+  bad: z.enum([...BAD_REASONS, 'any', 'none']).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
 
@@ -40,6 +43,9 @@ leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   if (f.line) where.push(eq(leads.line, f.line));
   if (f.type) where.push(eq(leads.type, f.type));
   if (f.days) where.push(gte(leads.createdAt, new Date(Date.now() - f.days * 864e5)));
+  if (f.bad === 'any') where.push(isNotNull(leads.badReason));
+  else if (f.bad === 'none') where.push(isNull(leads.badReason));
+  else if (f.bad) where.push(eq(leads.badReason, f.bad));
   if (f.intake) where.push(eq(leads.stage, 'new'), or(isNull(leads.agentId), gte(leads.createdAt, new Date(Date.now() - 3 * 864e5)))!);
 
   const rows = await db.select().from(leads).where(and(...where)).orderBy(desc(leads.createdAt)).limit(f.limit);
@@ -122,6 +128,8 @@ const Patch = z.object({
   automation: z.string().nullable().optional(),
   /** Take over from the AI ('stopped') or hand back to it (null = AI may answer again). */
   aiStatus: z.enum(['stopped']).nullable().optional(),
+  /** Mark as a bad lead, or null to clear. */
+  badReason: z.enum(BAD_REASONS).nullable().optional(),
 });
 
 leadsRouter.patch('/:id', ah<AuthedRequest>(async (req, res) => {
@@ -138,6 +146,10 @@ leadsRouter.patch('/:id', ah<AuthedRequest>(async (req, res) => {
     if (body.aiStatus !== undefined) { set.aiStatus = body.aiStatus; if (body.aiStatus === null) set.aiTurns = 0; }
     await tx.update(leads).set(set).where(eq(leads.id, lead.id));
     if (body.automation === null) await stopRuns(tx, lead.id, 'manual');
+    if (body.badReason !== undefined) {
+      if (body.badReason === null && lead.badReason && req.user.role !== 'admin') throw forbidden('Only the Super Admin can clear a bad-lead flag');
+      await markBad(tx, { ...lead, ...set } as typeof lead, body.badReason, { id: req.user.id, name: req.user.name });
+    }
     if (body.stage) await setStage(tx, lead, body.stage, { id: req.user.id, name: req.user.name });
     if (body.agentId && body.agentId !== lead.agentId) {
       const a = await tx.query.users.findFirst({ where: eq(users.id, body.agentId) });
@@ -160,7 +172,7 @@ leadsRouter.post('/delete', requireAdmin, ah<AuthedRequest>(async (req, res) => 
 }));
 
 leadsRouter.post('/bulk', requireAdmin, ah<AuthedRequest>(async (req, res) => {
-  const body = z.object({ ids: z.array(z.string().uuid()).min(1).max(500), agentId: z.string().uuid().optional(), stage: z.enum(STAGES).optional() }).parse(req.body);
+  const body = z.object({ ids: z.array(z.string().uuid()).min(1).max(500), agentId: z.string().uuid().optional(), stage: z.enum(STAGES).optional(), badReason: z.enum(BAD_REASONS).nullable().optional() }).parse(req.body);
   if (body.stage === 'won') throw badRequest('Won leads need a policy; mark them won one at a time');
   const rows = await db.query.leads.findMany({ where: and(inArray(leads.id, body.ids), eq(leads.agencyId, req.user.agencyId)) });
   await db.transaction(async (tx) => {
@@ -169,6 +181,7 @@ leadsRouter.post('/bulk', requireAdmin, ah<AuthedRequest>(async (req, res) => {
       await notify(tx, { agencyId: req.user.agencyId, userId: body.agentId, kind: 'lead', text: `${rows.length} leads were assigned to you` });
     }
     if (body.stage) for (const l of rows) await setStage(tx, l, body.stage, { id: req.user.id, name: req.user.name });
+    if (body.badReason !== undefined) for (const l of rows) await markBad(tx, l, body.badReason, { id: req.user.id, name: req.user.name });
   });
   res.json({ updated: rows.length });
 }));
@@ -208,7 +221,7 @@ leadsRouter.get('/queue/mine', ah<AuthedRequest>(async (req, res) => {
   const st = await getSettings(req.user.agencyId);
   const eod = new Date(); eod.setHours(23, 59, 59, 999);
   const now = Date.now();
-  const rows = await db.select().from(leads).where(and(leadScope(req.user), inArray(leads.stage, ['new', 'attempted', 'followup', 'ready', 'quoted', 'requote'])));
+  const rows = await db.select().from(leads).where(and(leadScope(req.user), isNull(leads.badReason), inArray(leads.stage, ['new', 'attempted', 'followup', 'ready', 'quoted', 'requote'])));
   const q: { bucket: string; lead: typeof rows[number] }[] = [];
   rows.filter((l) => l.stage === 'new' && l.attempts < st.attemptsDay1).sort((a, b) => +b.createdAt - +a.createdAt).forEach((lead) => q.push({ bucket: 'new', lead }));
   rows.filter((l) => l.stage === 'followup' && l.callbackRequested && l.followUpAt && +l.followUpAt <= +eod).sort((a, b) => +a.followUpAt! - +b.followUpAt!).forEach((lead) => q.push({ bucket: 'callback', lead }));
