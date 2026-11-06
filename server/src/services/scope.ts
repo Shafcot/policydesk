@@ -20,4 +20,5 @@ export async function getVisibleLead(u: User, id: string): Promise<Lead> {
 export function assertCanCall(u: User, lead: Lead) {
   if (u.role !== 'admin' && lead.agentId !== u.id) throw forbidden('Only the lead owner can call this lead');
   if (lead.lockedById && lead.lockedById !== u.id) throw forbidden('Another user is on a call with this lead');
+  if (lead.badReason === 'dnc' || lead.badReason === 'dns') throw forbidden(`This lead is marked ${lead.badReason === 'dnc' ? 'Do Not Call' : 'Do Not Solicit'}. Calling is blocked.`);
 }

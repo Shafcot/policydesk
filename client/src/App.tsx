@@ -12,6 +12,7 @@ import { Calendar } from './pages/Calendar';
 import { Inbox } from './pages/Inbox';
 import { Customers, Sales, TargetsPage } from './pages/Book';
 import { Reports } from './pages/Reports';
+import { BadLeads } from './pages/BadLeads';
 import { SettingsPage, Users } from './pages/Admin';
 import { Numbers } from './pages/Numbers';
 import { Automations } from './pages/Automations';
@@ -47,6 +48,7 @@ export function App() {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="automations" element={<Automations />} />
           <Route path="campaigns" element={<Campaigns />} />
+          <Route path="bad-leads" element={<BadLeads />} />
         </>}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

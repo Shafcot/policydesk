@@ -17,6 +17,17 @@ export const QUOTE_RESULTS = RESULTS.filter((r) => !r.main);
 export type CallResult = (typeof RESULTS)[number]['k'];
 export const RES = Object.fromEntries(RESULTS.map((r) => [r.k, r])) as Record<CallResult, (typeof RESULTS)[number]>;
 
+/** Bad-lead categories (mirror of the server). DNS/DNC also opt the lead out and block calls. */
+export const BAD_REASONS = [
+  { k: 'bad_number', n: 'Bad number', c: '--bad', short: 'Bad #', hint: 'Wrong, disconnected or not-in-service number' },
+  { k: 'unreachable', n: 'Unreachable', c: '--warn', short: 'Unreach.', hint: 'Never answers after all attempts' },
+  { k: 'dns', n: 'Do Not Solicit', c: '--s7', short: 'DNS', hint: 'Asked not to be solicited · blocks calls, texts and emails' },
+  { k: 'dnc', n: 'Do Not Call', c: '--s7', short: 'DNC', hint: 'On a Do-Not-Call list or asked not to be called · blocks calls, texts and emails' },
+] as const;
+export type BadReason = (typeof BAD_REASONS)[number]['k'];
+export const BAD = Object.fromEntries(BAD_REASONS.map((r) => [r.k, r])) as Record<BadReason, (typeof BAD_REASONS)[number]>;
+export const isBlockingBad = (r: BadReason | null | undefined) => r === 'dns' || r === 'dnc';
+
 export const PERSONAL_LINES = ['Auto', 'Home', 'Renters', 'Life', 'Umbrella'];
 export const COMMERCIAL_LINES = ['Commercial Auto', 'General Liability', 'Workers Comp', 'BOP'];
 export const LINES = [...PERSONAL_LINES, ...COMMERCIAL_LINES];
@@ -36,6 +47,7 @@ export type Lead = {
   stage: Stage; stageChangedAt: string; source: string; agentId: string | null; line: string; type: 'personal' | 'commercial';
   attempts: number; lastAttemptAt: string | null; lastContactAt: string | null; lastCallById: string | null;
   followUpAt: string | null; callbackRequested: boolean; quotePremium: number | null; optOut: boolean; automation: string | null; aiStatus: 'active' | 'booked' | 'handoff' | 'stopped' | null; aiTurns: number;
+  badReason: BadReason | null; badAt: string | null;
   custom: Record<string, string>; createdAt: string; flags?: string[];
 };
 export type Call = { id: string; startedAt: string; durationSec: number; result: CallResult; recordingUrl: string | null; summary: string | null; notes: string | null; transcript: { speaker: string; text: string }[] | null; transcriptStatus: string | null; userName: string | null };

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth, useMe } from '../lib/auth';
 import { useCalls, useTick } from '../lib/calls';
-import { MAIN_RESULTS, QUOTE_RESULTS, STG, fullName, type Lead } from '../lib/domain';
+import { BAD_REASONS, MAIN_RESULTS, QUOTE_RESULTS, STG, fullName, isBlockingBad, type Lead } from '../lib/domain';
 import { ago, dur, ftime, pct } from '../lib/format';
 import { usePublicSettings, type CallScript } from '../lib/hooks';
 import { useOpenLead } from '../lib/leadLink';
@@ -108,6 +108,10 @@ export function Dialer() {
                     <div className="lbl-sm" style={{ marginBottom: 6 }}>Call result → updates the stage{c.auto ? ' and loads the next lead' : ''}</div>
                     <div className="result-grid six">{MAIN_RESULTS.map((r) => <button key={r.k} className="result-btn" style={{ ['--c' as string]: `var(${r.c})` }} onClick={() => void c.logResult(r.k)}>{r.n}</button>)}</div>
                     <div className="row" style={{ marginTop: 6, gap: 6 }}><small className="muted">Quote stage:</small>{QUOTE_RESULTS.map((r) => <button key={r.k} className="btn sm ghost" onClick={() => void c.logResult(r.k)}>{r.n}</button>)}</div>
+                    <div className="row bad-row" style={{ marginTop: 6, gap: 6 }}><small className="muted">Bad lead:</small>{BAD_REASONS.map((r) => (
+                      <button key={r.k} className="btn sm ghost" title={r.hint}
+                        onClick={() => { if (!isBlockingBad(r.k) || window.confirm(`Mark ${fullName(lead)} as ${r.n}? Calls, texts and emails to this lead will be blocked.`)) void c.logResult(isBlockingBad(r.k) ? 'lost' : 'no_answer', r.k); }}>{r.n}</button>
+                    ))}</div>
                   </div>
                   <div className="row">
                     <button className="btn ghost" onClick={() => openLead(lead.id)}>Open lead page</button>

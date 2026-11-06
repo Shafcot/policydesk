@@ -8,6 +8,7 @@ import { fire, stopRuns } from './automation.js';
 import { emit } from './realtime.js';
 import { sendTeamEmail } from './mailer.js';
 import { env } from '../config.js';
+import { markBad } from './badleads.js';
 import { DEFAULT_SETTINGS, NOT_REACHED, RESULT_STAGE, STAGE_LABELS, type AgencySettings, type CallResult, type Stage } from '../domain.js';
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -130,6 +131,10 @@ export async function recordCall(
     if (input.notes) await tx.insert(notes).values({ leadId: lead.id, userId: user.id, body: input.notes });
     // "Sold" moves to Won only once the customer + policy exist (POST /leads/:id/won), so the stage never says Won without a sale.
     if (input.result !== 'sold') await setStage(tx, lead, stage, { id: user.id, name: user.name }, `call result: ${input.result.replace('_', ' ')}`);
+    // Never reached after the maximum attempts → flag as Unreachable (shows in the Bad leads report; an admin can clear it).
+    if (!reached && attempts >= st.maxAttempts && !lead.lastContactAt && !lead.badReason) {
+      await markBad(tx, { ...lead, ...patch } as Lead, 'unreachable', null);
+    }
     await fire(tx, 'call_result', { agencyId: lead.agencyId, leadId: lead.id, result: input.result });
     const updated = await tx.query.leads.findFirst({ where: eq(leads.id, lead.id) });
     return updated!;

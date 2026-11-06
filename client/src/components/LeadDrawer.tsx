@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { useMe } from '../lib/auth';
-import { STAGES, STG, fullName, type CallResult, type LeadDetail, type Stage, MAIN_RESULTS, QUOTE_RESULTS, RES } from '../lib/domain';
+import { BAD, BAD_REASONS, isBlockingBad, STAGES, STG, fullName, type CallResult, type LeadDetail, type Stage, MAIN_RESULTS, QUOTE_RESULTS, RES } from '../lib/domain';
 import { ago, dur, fdate, fdateY, fdt, ftime, money, toLocalInput } from '../lib/format';
 import { usePublicSettings, useTeam } from '../lib/hooks';
 import { useToast } from '../lib/toast';
@@ -83,7 +83,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
             : <span>Owned by <b>{l.agentName ?? 'nobody yet'}</b> · last contact {ago(l.lastContactAt)}{l.lastCallByName ? ` by ${l.lastCallByName}` : ''}. Only the owner can call this lead.</span>}
         </div>
         <div className="row">
-          <button className="btn primary" disabled={!canCall || !!l.lockedByName || (!!calls.active && calls.active.state !== 'ended')} onClick={() => void calls.callLead(l)}><Icon name="phone" className="sm" />Call {l.phone}</button>
+          <button className="btn primary" disabled={!canCall || !!l.lockedByName || isBlockingBad(l.badReason) || (!!calls.active && calls.active.state !== 'ended')} onClick={() => void calls.callLead(l)}><Icon name="phone" className="sm" />Call {l.phone}</button>
           <button className="btn" onClick={() => setTab('sms')}><Icon name="msg" className="sm" />SMS</button>
           <button className="btn" onClick={() => setTab('email')}><Icon name="mail" className="sm" />Email</button>
           <button className="btn" onClick={() => setBook(true)}><Icon name="calendar" className="sm" />Book</button>
@@ -92,7 +92,10 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
         </div>
       </div>
       <div className="drawer-b">
-        {l.optOut && <div className="optout"><Icon name="alert" className="sm" />Opted out (replied STOP). Removed from all SMS, email and automations.</div>}
+        {l.badReason && <div className="optout bad-banner"><Icon name="flag" className="sm" />
+          <span>Bad lead: <b>{BAD[l.badReason].n}</b>{l.badAt ? ` · ${fdateY(l.badAt)}` : ''}. {isBlockingBad(l.badReason) ? 'Calls, texts, emails and automations are blocked.' : 'Kept out of the dialer queue and automations.'}</span>
+          {isAdmin && <button className="btn sm" onClick={() => patch.mutate({ badReason: null })}>Clear</button>}</div>}
+        {l.optOut && !isBlockingBad(l.badReason) && <div className="optout"><Icon name="alert" className="sm" />Opted out (replied STOP). Removed from all SMS, email and automations.</div>}
         {l.aiStatus && !l.optOut && <div className="owner-note ai-note"><Icon name="bot" className="sm" />
           <span>{{ active: `The AI is texting ${l.firstName} (${l.aiTurns} ${l.aiTurns === 1 ? 'reply' : 'replies'}) and will try to book a call.`, booked: 'The AI booked a call with this lead.', handoff: 'The AI handed this conversation to the agent.', stopped: 'AI replies are off for this lead.' }[l.aiStatus]}</span>
           {canCall && (l.aiStatus === 'active'
@@ -108,6 +111,10 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
             ))}
           </div>
           <div className="row" style={{ marginTop: 6, gap: 6 }}><small className="muted">Quote stage:</small>{QUOTE_RESULTS.map((r) => <button key={r.k} className="btn sm ghost" disabled={!canCall || logCall.isPending} onClick={() => logCall.mutate(r.k)}>{r.n}</button>)}</div>
+          <div className="row bad-row" style={{ marginTop: 6, gap: 6 }}><small className="muted">Bad lead:</small>{BAD_REASONS.map((r) => (
+            <button key={r.k} className={`btn sm ghost ${l.badReason === r.k ? 'on' : ''}`} title={r.hint} disabled={!canCall || patch.isPending || (!!l.badReason && !isAdmin)}
+              onClick={() => { if (l.badReason !== r.k && (!isBlockingBad(r.k) || window.confirm(`Mark ${fullName(l)} as ${r.n}? Calls, texts and emails to this lead will be blocked.`))) patch.mutate({ badReason: r.k }, { onSuccess: () => toast(`Marked as ${r.n}`) }); }}>{r.n}</button>
+          ))}</div>
           </div></section>
 
         <section className="panel"><div className="panel-h"><h3>Details</h3></div><div className="panel-b"><div className="kv">

@@ -217,7 +217,7 @@ export function SettingsPage() {
             <div className="form-grid">
               <div className="field"><label htmlFor="b-app">App name</label><input id="b-app" className="input" value={a.brandName} onChange={(e) => setAgency({ ...agency, brandName: e.target.value })} /></div>
               <div className="field"><label htmlFor="b-agency">Agency name</label><input id="b-agency" className="input" value={a.name} onChange={(e) => setAgency({ ...agency, name: e.target.value })} /></div>
-              <div className="field"><label htmlFor="b-color">Brand color</label><input id="b-color" className="input" type="color" style={{ height: 40, padding: 3 }} value={a.brandColor ?? '#0d5049'} onChange={(e) => setAgency({ ...agency, brandColor: e.target.value })} /></div>
+              <div className="field"><label htmlFor="b-color">Brand color</label><input id="b-color" className="input" type="color" style={{ height: 40, padding: 3 }} value={a.brandColor ?? '#1a64c8'} onChange={(e) => setAgency({ ...agency, brandColor: e.target.value })} /></div>
             </div>
             <p className="help">Logo upload arrives with file storage once hosting is decided. Each agency gets its own name and colors (white-label).</p>
           </>}

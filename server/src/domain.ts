@@ -33,6 +33,18 @@ export const RESULT_STAGE: Record<CallResult, Stage> = {
   lost: 'lost',
 };
 
+/** Bad-lead categories (client request): kept out of the dialer queue and automations, reported in Admin. */
+export const BAD_REASONS = ['bad_number', 'unreachable', 'dns', 'dnc'] as const;
+export type BadReason = (typeof BAD_REASONS)[number];
+export const BAD_REASON_LABELS: Record<BadReason, string> = {
+  bad_number: 'Bad number',
+  unreachable: 'Unreachable',
+  dns: 'Do Not Solicit',
+  dnc: 'Do Not Call',
+};
+/** These also opt the lead out of texts/emails and block calling. */
+export const BLOCKING_BAD: readonly BadReason[] = ['dns', 'dnc'];
+
 export const ROLES = ['admin', 'agent'] as const;
 export type Role = (typeof ROLES)[number];
 
