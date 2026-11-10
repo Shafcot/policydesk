@@ -13,7 +13,7 @@ export const cfg = {
   // Falls back to CLIENT_ORIGIN: the app and API are served from one address in production.
   publicApiUrl: () => (v('PUBLIC_API_URL') || (/^https:\/\//.test(env.CLIENT_ORIGIN) ? env.CLIENT_ORIGIN : '')).replace(/\/$/, ''),
   twilio: () => ({ accountSid: v('TWILIO_ACCOUNT_SID'), authToken: v('TWILIO_AUTH_TOKEN'), apiKey: v('TWILIO_API_KEY'), apiSecret: v('TWILIO_API_SECRET'), twimlAppSid: v('TWILIO_TWIML_APP_SID'), messagingServiceSid: v('TWILIO_MESSAGING_SERVICE_SID'), callerId: v('TWILIO_CALLER_ID'), recordingNotice: v('CALL_RECORDING_NOTICE') }),
-  sendgrid: () => ({ apiKey: v('SENDGRID_API_KEY'), from: v('SENDGRID_FROM_EMAIL'), fromName: v('SENDGRID_FROM_NAME') || 'Policy-desk CRM', inboundDomain: v('SENDGRID_INBOUND_DOMAIN'), inboundKey: v('SENDGRID_INBOUND_KEY') }),
+  sendgrid: () => ({ apiKey: v('SENDGRID_API_KEY'), from: v('SENDGRID_FROM_EMAIL'), fromName: v('SENDGRID_FROM_NAME') || 'Bliss', inboundDomain: v('SENDGRID_INBOUND_DOMAIN'), inboundKey: v('SENDGRID_INBOUND_KEY') }),
   openai: () => ({ apiKey: v('OPENAI_API_KEY'), transcribeModel: v('OPENAI_TRANSCRIBE_MODEL') || 'whisper-1', chatModel: v('OPENAI_CHAT_MODEL') || 'gpt-4o-mini' }),
   firebase: () => ({ serviceAccount: v('FIREBASE_SERVICE_ACCOUNT_JSON') }),
   /** Public web config for browser push (safe to send to the browser). */

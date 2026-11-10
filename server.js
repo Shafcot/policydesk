@@ -3,7 +3,7 @@
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
 process.env.CLIENT_DIST = process.env.CLIENT_DIST || require('node:path').join(__dirname, 'client', 'dist');
 
-console.log(`Policy-desk starting: node ${process.version}, PORT=${process.env.PORT ?? '(unset)'}, DATABASE_URL ${process.env.DATABASE_URL ? 'set' : 'MISSING'}, JWT_SECRET ${process.env.JWT_SECRET ? 'set' : 'MISSING'}`);
+console.log(`Bliss starting: node ${process.version}, PORT=${process.env.PORT ?? '(unset)'}, DATABASE_URL ${process.env.DATABASE_URL ? 'set' : 'MISSING'}, JWT_SECRET ${process.env.JWT_SECRET ? 'set' : 'MISSING'}`);
 
 // Some hosts don't run (or don't keep) the build step's output. If it's missing, build once before starting.
 const fs = require('node:fs'), path = require('node:path');
@@ -20,7 +20,7 @@ if (!built()) {
 import('./server/dist/start.js').catch((e) => {
   // Don't just exit (the host would only show "503"): serve a page that says what's wrong, without secrets.
   const msg = String((e && e.message) || e).replace(/postgres(ql)?:\/\/[^\s'"]+/gi, '[database url]').slice(0, 600);
-  console.error('Policy-desk failed to start:', e);
+  console.error('Bliss failed to start:', e);
   const hints = [];
   if (!process.env.DATABASE_URL) hints.push('DATABASE_URL is not set. Add the Neon connection string in the app\'s environment variables.');
   if (!process.env.JWT_SECRET) hints.push('JWT_SECRET is not set. Add 40+ random characters.');
@@ -30,7 +30,7 @@ import('./server/dist/start.js').catch((e) => {
   if (/Cannot find module|ERR_MODULE_NOT_FOUND/.test(msg)) hints.push('The app could not be built on the server. In the app\'s build settings set Build command to "npm run build" (Node.js 22), then redeploy and send the build log.');
   const diag = `node ${process.version} · node_modules ${fs.existsSync(path.join(__dirname, 'node_modules', 'express')) ? 'installed' : 'MISSING'} · server/dist ${fs.existsSync(path.join(__dirname, 'server', 'dist')) ? 'present' : 'missing'} · client/dist ${fs.existsSync(path.join(__dirname, 'client', 'dist')) ? 'present' : 'missing'}`;
   const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
-  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Policy-desk: startup error</title><body style="font-family:system-ui;max-width:640px;margin:10vh auto;padding:0 16px;line-height:1.5"><h2>Policy-desk couldn't start</h2>${hints.length ? `<ul>${hints.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>` : ''}<p><b>Error:</b></p><pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:8px">${esc(msg)}</pre><p><b>Server:</b> ${esc(diag)}</p>${buildLog ? `<p><b>Build output (last lines):</b></p><pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:8px;font-size:12px">${esc(buildLog.replace(/postgres(ql)?:\/\/[^\s'"]+/gi, '[database url]'))}</pre>` : ''}<p>Fix the environment variables in hPanel, then redeploy or restart the app.</p></body>`;
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Bliss: startup error</title><body style="font-family:system-ui;max-width:640px;margin:10vh auto;padding:0 16px;line-height:1.5"><h2>Bliss couldn't start</h2>${hints.length ? `<ul>${hints.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>` : ''}<p><b>Error:</b></p><pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:8px">${esc(msg)}</pre><p><b>Server:</b> ${esc(diag)}</p>${buildLog ? `<p><b>Build output (last lines):</b></p><pre style="white-space:pre-wrap;background:#f4f4f4;padding:12px;border-radius:8px;font-size:12px">${esc(buildLog.replace(/postgres(ql)?:\/\/[^\s'"]+/gi, '[database url]'))}</pre>` : ''}<p>Fix the environment variables in hPanel, then redeploy or restart the app.</p></body>`;
   const port = process.env.PORT && /^\d+$/.test(process.env.PORT) ? Number(process.env.PORT) : (process.env.PORT || 4000);
   require('node:http').createServer((_req, res) => { res.writeHead(503, { 'content-type': 'text/html; charset=utf-8' }); res.end(html); }).listen(port);
 });

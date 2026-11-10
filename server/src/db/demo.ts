@@ -44,7 +44,7 @@ export async function seedDemo() {
   const pw = await hashPassword(process.env.SEED_PASSWORD ?? 'Policydesk123!');
 
   const [agency] = await db.insert(agencies).values({
-    name: 'Demo Insurance Agency', brandName: 'Policy-desk CRM',
+    name: 'Demo Insurance Agency', brandName: 'Bliss',
     settings: { ...DEFAULT_SETTINGS, teamTarget: 240000, reviewLinks: { google: 'https://g.page/r/demo/review', facebook: 'https://facebook.com/demo/reviews', yelp: 'https://yelp.com/biz/demo' } },
   }).returning();
 

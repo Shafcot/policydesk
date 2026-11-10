@@ -54,12 +54,12 @@ export function Shell() {
   const [open, setOpen] = useState(false);
   const loc = useLocation();
   useEffect(() => setOpen(false), [loc.pathname]);
-  const brand = agency?.brandName ?? 'Policy-desk CRM';
+  const brand = agency?.brandName ?? 'Bliss';
   return (
     <CallProvider>
     <div id="app">
       <aside id="side" className={open ? 'open' : ''} aria-label="Main navigation">
-        <div className="brand"><div className="brand-mark">{brand[0]}</div><div><b>{brand}</b><small>{agency?.name}</small></div></div>
+        <div className="brand"><img className="brand-logo" src="/brand/bliss-mark.png" alt="" /><div><b>{brand}</b><small>{agency?.name}</small></div></div>
         <nav className="nav">
           {NAV.map(([group, items]) => {
             const vis = items.filter((i) => !i.admin || isAdmin);

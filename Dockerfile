@@ -1,4 +1,4 @@
-# Policy-desk CRM: one image with the API, the background worker and the built React app.
+# Bliss: one image with the API, the background worker and the built React app.
 # Host-neutral: runs on any Docker host (Render, Railway, Fly.io, DigitalOcean, a VPS, AWS, …).
 
 FROM node:22-alpine AS build

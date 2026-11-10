@@ -13,7 +13,7 @@ export async function createAgency(o: { agencyName: string; ownerName: string; e
   const inviteToken = o.password ? null : randomBytes(24).toString('hex');
   const passwordHash = o.password ? await hashPassword(o.password) : null;
   await db.transaction(async (tx) => {
-    const [agency] = await tx.insert(agencies).values({ name: o.agencyName, brandName: 'Policy-desk CRM', settings: DEFAULT_SETTINGS }).returning();
+    const [agency] = await tx.insert(agencies).values({ name: o.agencyName, brandName: 'Bliss', settings: DEFAULT_SETTINGS }).returning();
     await tx.insert(users).values({ agencyId: agency.id, name: o.ownerName, email: o.email.toLowerCase().trim(), role: 'admin', status: 'offline', passwordHash, inviteToken, bookingSlug: makeSlug(o.ownerName) });
     await installAgencyDefaults(tx, agency.id);
   });

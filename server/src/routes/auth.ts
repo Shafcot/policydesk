@@ -66,7 +66,7 @@ export async function issueReset(userId: string) {
   const token = randomBytes(24).toString('hex');
   const [u] = await db.update(users).set({ resetToken: token, resetExpiresAt: new Date(Date.now() + 3600e3) }).where(eq(users.id, userId)).returning();
   const link = `${env.CLIENT_ORIGIN}/reset-password?token=${token}`;
-  await sendTeamEmail(db, { agencyId: u.agencyId, to: u.email, subject: 'Reset your Policy-desk CRM password', body: `Hi ${u.name.split(' ')[0]},\n\nUse this link to set a new password (valid for 1 hour):\n${link}\n\nIf you didn't ask for this, you can ignore this email.` });
+  await sendTeamEmail(db, { agencyId: u.agencyId, to: u.email, subject: 'Reset your Bliss password', body: `Hi ${u.name.split(' ')[0]},\n\nUse this link to set a new password (valid for 1 hour):\n${link}\n\nIf you didn't ask for this, you can ignore this email.` });
   return link;
 }
 

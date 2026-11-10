@@ -27,7 +27,7 @@ export async function notify(x: Exec, n: { agencyId: string; userId?: string | n
     const ids = n.userId ? [n.userId] : (await x.query.users.findMany({ where: and(eq(users.agencyId, n.agencyId), eq(users.role, 'admin'), eq(users.active, true)) })).map((u) => u.id);
     const toks = ids.length ? (await x.select().from(deviceTokens).where(inArray(deviceTokens.userId, ids))).map((t) => t.token) : [];
     if (toks.length) setImmediate(() => {
-      pushTo(toks, { title: 'Policy-desk CRM', body: n.text, link: n.leadId ? `${env.CLIENT_ORIGIN}/?lead=${n.leadId}` : env.CLIENT_ORIGIN })
+      pushTo(toks, { title: 'Bliss', body: n.text, link: n.leadId ? `${env.CLIENT_ORIGIN}/?lead=${n.leadId}` : env.CLIENT_ORIGIN })
         .then((bad) => (bad.length ? db.delete(deviceTokens).where(inArray(deviceTokens.token, bad)) : null)).catch((e) => console.error('push failed', e));
     });
   }
@@ -36,7 +36,7 @@ export async function notify(x: Exec, n: { agencyId: string; userId?: string | n
       ? await x.query.users.findMany({ where: and(eq(users.id, n.userId), eq(users.notifyByEmail, true), eq(users.active, true)) })
       : await x.query.users.findMany({ where: and(eq(users.agencyId, n.agencyId), eq(users.role, 'admin'), eq(users.notifyByEmail, true), eq(users.active, true)) });
     const link = n.leadId ? `${env.CLIENT_ORIGIN}/?lead=${n.leadId}` : env.CLIENT_ORIGIN;
-    for (const u of to) await sendTeamEmail(x, { agencyId: n.agencyId, to: u.email, subject: n.text.slice(0, 200), body: `${n.text}\n\nOpen in Policy-desk CRM: ${link}\n\nYou can turn off email notifications from your account menu.` });
+    for (const u of to) await sendTeamEmail(x, { agencyId: n.agencyId, to: u.email, subject: n.text.slice(0, 200), body: `${n.text}\n\nOpen in Bliss: ${link}\n\nYou can turn off email notifications from your account menu.` });
   }
 }
 

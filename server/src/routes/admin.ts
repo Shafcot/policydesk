@@ -33,7 +33,7 @@ adminRouter.post('/users/invite', ah<AuthedRequest>(async (req, res) => {
   const token = randomBytes(24).toString('hex');
   const [u] = await db.insert(users).values({ ...b, email, agencyId: req.user.agencyId, inviteToken: token, status: 'offline', bookingSlug: makeSlug(b.name) }).returning();
   const inviteLink = `${env.CLIENT_ORIGIN}/accept-invite?token=${token}`;
-  await sendTeamEmail(db, { agencyId: req.user.agencyId, to: email, subject: `${req.user.name} invited you to Policy-desk CRM`, body: `Hi ${b.name.split(' ')[0]},\n\n${req.user.name} invited you to join Policy-desk CRM. Set your password here:\n${inviteLink}` });
+  await sendTeamEmail(db, { agencyId: req.user.agencyId, to: email, subject: `${req.user.name} invited you to Bliss`, body: `Hi ${b.name.split(' ')[0]},\n\n${req.user.name} invited you to join Bliss. Set your password here:\n${inviteLink}` });
   res.status(201).json({ user: publicUser(u), inviteLink });
 }));
 
