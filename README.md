@@ -1,4 +1,4 @@
-# Policy-desk CRM
+# Bliss
 
 All-in-one CRM for insurance agencies: leads, pipeline, power dialer, inbox, automations, policies, sales and reports. It replaces GoHighLevel, AgencyZoom, Ricochet and RingCentral.
 

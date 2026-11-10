@@ -1,4 +1,4 @@
-# Deploying Policy-desk CRM
+# Deploying Bliss
 
 The app ships as **one Docker image**: the API, the background worker and the built React app on a single port (4000). It needs **PostgreSQL 16** and an **HTTPS** address, because Twilio, SendGrid, Facebook and Google only call webhooks over HTTPS. It is not tied to any one hosting provider.
 

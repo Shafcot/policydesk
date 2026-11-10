@@ -28,7 +28,7 @@ const createdAt = () => ts('created_at').notNull().defaultNow();
 export const agencies = pgTable('agencies', {
   id: id(),
   name: varchar('name', { length: 160 }).notNull(),
-  brandName: varchar('brand_name', { length: 80 }).notNull().default('Policy-desk CRM'),
+  brandName: varchar('brand_name', { length: 80 }).notNull().default('Bliss'),
   brandColor: varchar('brand_color', { length: 16 }),
   logoUrl: text('logo_url'),
   settings: jsonb('settings').$type<AgencySettings>().notNull().default(DEFAULT_SETTINGS),

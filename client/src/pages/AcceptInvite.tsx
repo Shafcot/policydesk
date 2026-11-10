@@ -21,7 +21,7 @@ export function AcceptInvite() {
   return (
     <div className="login-wrap">
       <form className="login-card panel" onSubmit={submit}>
-        <div><h2>Welcome to Policy-desk CRM</h2><p className="muted">Set a password to finish setting up your account.</p></div>
+        <div><h2>Welcome to Bliss</h2><p className="muted">Set a password to finish setting up your account.</p></div>
         {!token && <p className="optout">This link is missing its invitation code. Ask your Super Admin to send it again.</p>}
         <div className="field"><label htmlFor="pw">New password</label><input id="pw" className="input" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} /></div>
         <div className="field"><label htmlFor="pw2">Confirm password</label><input id="pw2" className="input" type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} /></div>

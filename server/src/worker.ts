@@ -7,4 +7,4 @@ import { setTeamEmailProvider } from './services/mailer.js';
 setTeamEmailProvider((e) => sendEmail(e).then(() => undefined), enabled.email);
 
 startWorker();
-console.log('Policy-desk worker started');
+console.log('Bliss worker started');

@@ -15,7 +15,8 @@ export function Login() {
   return (
     <div className="login-wrap">
       <form className="login-card panel" onSubmit={submit}>
-        <div className="brand" style={{ padding: 0 }}><div className="brand-mark">P</div><div><b style={{ color: 'var(--ink)' }}>Policy-desk CRM</b><small className="muted">Sign in to your agency</small></div></div>
+        <div className="login-brand"><img src="/brand/bliss-mark.png" alt="" /><b>Bliss</b><small>Enterprise Software Solutions</small></div>
+        <p className="muted login-sub">Sign in to your agency</p>
         <div className="field"><label htmlFor="email">Email</label><input id="email" className="input" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         <div className="field"><label htmlFor="password">Password</label><input id="password" className="input" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {err && <p className="optout">{err}</p>}
