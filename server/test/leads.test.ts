@@ -57,3 +57,24 @@ describe('lead intake', () => {
     expect(r.body.duplicates).toBe(1);
   });
 });
+
+describe('import bridge', () => {
+  it('serves the bridge page without opener isolation, and bulk import keeps notes, stages and dates', async () => {
+    const page = await request(app).get('/import-bridge');
+    expect(page.status).toBe(200);
+    expect(page.headers['cross-origin-opener-policy']).toBeUndefined();
+    expect(page.text).toContain('/import-bridge.js');
+    const a = await as(ADMIN);
+    const p1 = freshPhone(), p2 = freshPhone();
+    const rows = Array.from({ length: 620 }, (_, i) => ({ firstName: `Bulk${i}`, lastName: 'Row', phone: i === 619 ? p1 : freshPhone(), stage: i % 2 ? 'Quoted' : 'new', createdAt: '2024-03-05T10:00:00-06:00', notes: `Old CRM #${i}` }));
+    rows.push({ firstName: 'Dup', lastName: 'Row', phone: p1, stage: 'new', createdAt: '2024-03-05T10:00:00-06:00', notes: '' });
+    rows.push({ firstName: '', lastName: 'NoName', phone: p2, stage: 'new', createdAt: '', notes: '' });
+    const r = await a.post('/api/leads/import', { rows, defaultSource: 'AgencyZoom', autoAssign: false });
+    expect(r.body).toMatchObject({ imported: 620, duplicates: 1 });
+    expect(r.body.skipped).toHaveLength(1);
+    const l = await db.query.leads.findFirst({ where: eq(leads.phone, p1), with: { notes: true } });
+    expect(l?.stage).toBe('quoted');
+    expect(l?.createdAt.toISOString()).toBe('2024-03-05T16:00:00.000Z');
+    expect(l?.notes?.[0]?.body).toContain('Old CRM #619');
+  });
+});

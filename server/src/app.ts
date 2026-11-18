@@ -70,6 +70,18 @@ export function createApp() {
   app.use('/api', callsRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'not_found' }));
 
+  // Import bridge (data migrations): the old CRM's page opens this window and posts leads to it. It must keep
+  // its link to the window that opened it, so it skips the usual "same-origin" opener isolation. The page itself
+  // asks the admin to allow the sending website and uses the admin's own sign-in (see client/public/import-bridge.js).
+  app.get('/import-bridge', (_req, res) => {
+    res.removeHeader('Cross-Origin-Opener-Policy');
+    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bliss · Import bridge</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;background:#EEF5FD;color:#0F2347;margin:0;padding:32px 16px}main{max-width:560px;margin:auto;background:#fff;border:1px solid #D6E2F1;border-radius:14px;padding:24px}h1{font-size:20px;margin:0 0 6px}#ask{border:1px solid #2B7BF2;border-radius:10px;padding:14px;margin:14px 0;background:#E3EFFE}button{font:inherit;border-radius:999px;padding:8px 16px;border:1px solid #2470E6;margin-right:8px;cursor:pointer}#allow{background:#2B7BF2;color:#fff}#deny{background:#fff;color:#0F2347;border-color:#D6E2F1}small{color:#53678A}</style></head>
+<body><main><h1>Import leads into Bliss</h1><p id="who"></p>
+<div id="ask" hidden><b>Allow <span id="origin"></span> to send leads into Bliss?</b><p><small>Only allow a website you are migrating from yourself. Leads are added to this agency; nothing is deleted or sent anywhere.</small></p><button id="allow">Allow</button><button id="deny">Not now</button></div>
+<p id="stats"></p><p><small>Keep this tab open until the import finishes.</small></p></main><script src="/import-bridge.js"></script></body></html>`);
+  });
+
     // Production: serve the built React app from the same origin (set CLIENT_DIST, e.g. ../client/dist).
     const dist = process.env.CLIENT_DIST ? path.resolve(process.env.CLIENT_DIST) : '';
     if (dist && existsSync(path.join(dist, 'index.html'))) {
