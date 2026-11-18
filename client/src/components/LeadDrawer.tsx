@@ -83,7 +83,7 @@ function DrawerBody({ id, onClose }: { id: string; onClose: () => void }) {
             : <span>Owned by <b>{l.agentName ?? 'nobody yet'}</b> · last contact {ago(l.lastContactAt)}{l.lastCallByName ? ` by ${l.lastCallByName}` : ''}. Only the owner can call this lead.</span>}
         </div>
         <div className="row">
-          <button className="btn primary" disabled={!canCall || !!l.lockedByName || isBlockingBad(l.badReason) || (!!calls.active && calls.active.state !== 'ended')} onClick={() => void calls.callLead(l)}><Icon name="phone" className="sm" />Call {l.phone}</button>
+          <button className="btn primary" disabled={!canCall || !l.phone || !!l.lockedByName || isBlockingBad(l.badReason) || (!!calls.active && calls.active.state !== 'ended')} onClick={() => void calls.callLead(l)}><Icon name="phone" className="sm" />Call {l.phone}</button>
           <button className="btn" onClick={() => setTab('sms')}><Icon name="msg" className="sm" />SMS</button>
           <button className="btn" onClick={() => setTab('email')}><Icon name="mail" className="sm" />Email</button>
           <button className="btn" onClick={() => setBook(true)}><Icon name="calendar" className="sm" />Book</button>
