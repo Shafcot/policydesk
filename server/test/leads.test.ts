@@ -78,3 +78,28 @@ describe('import bridge', () => {
     expect(l?.notes?.[0]?.body).toContain('Old CRM #619');
   });
 });
+
+describe('migration extras', () => {
+  it('imports leads without a phone when allowed (deduped by email), blocks calling them, and adds history by phone', async () => {
+    const a = await as(ADMIN);
+    const em = `nophone-${Date.now()}@example.com`;
+    const r = await a.post('/api/leads/import', { allowNoPhone: true, autoAssign: false, defaultSource: 'AgencyZoom', rows: [
+      { firstName: 'Email', lastName: 'Only', email: em },
+      { firstName: 'Email', lastName: 'Again', email: em.toUpperCase() },
+      { firstName: 'Nothing', lastName: 'Else' },
+    ] });
+    expect(r.body).toMatchObject({ imported: 2, duplicates: 1 });
+    const l = await db.query.leads.findFirst({ where: eq(leads.email, em) });
+    expect(l?.phone).toBe('');
+    expect((await a.post(`/api/leads/${l!.id}/lock`)).status).toBe(400);
+    const strict = await a.post('/api/leads/import', { defaultSource: 'X', rows: [{ firstName: 'No', lastName: 'Phone', email: 'x@example.com' }] });
+    expect(strict.body.imported).toBe(0);
+
+    const phone = freshPhone();
+    await a.post('/api/leads/import', { autoAssign: false, defaultSource: 'AgencyZoom', rows: [{ firstName: 'Has', lastName: 'History', phone }] });
+    const n = await a.post('/api/leads/notes/bulk', { items: [{ phone, body: 'AgencyZoom history: called twice' }, { phone: '(000) 000-0000', body: 'nobody' }] });
+    expect(n.body).toEqual({ added: 1, unmatched: 1 });
+    const withNotes = await db.query.leads.findFirst({ where: eq(leads.phone, phone), with: { notes: true } });
+    expect(withNotes?.notes.some((x) => x.body.includes('called twice'))).toBe(true);
+  });
+});

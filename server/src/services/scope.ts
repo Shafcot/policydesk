@@ -1,7 +1,7 @@
 import { and, eq, type SQL } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { leads, type Lead, type User } from '../db/schema.js';
-import { forbidden, notFound } from '../lib/http.js';
+import { badRequest, forbidden, notFound } from '../lib/http.js';
 
 /** Row filter for leads the user may see: admins see the whole agency, agents only their own. */
 export function leadScope(u: User): SQL {
@@ -20,5 +20,6 @@ export async function getVisibleLead(u: User, id: string): Promise<Lead> {
 export function assertCanCall(u: User, lead: Lead) {
   if (u.role !== 'admin' && lead.agentId !== u.id) throw forbidden('Only the lead owner can call this lead');
   if (lead.lockedById && lead.lockedById !== u.id) throw forbidden('Another user is on a call with this lead');
+  if (lead.phone.replace(/\D/g, '').length < 7) throw badRequest('This lead has no phone number yet. Add one to call.');
   if (lead.badReason === 'dnc' || lead.badReason === 'dns') throw forbidden(`This lead is marked ${lead.badReason === 'dnc' ? 'Do Not Call' : 'Do Not Solicit'}. Calling is blocked.`);
 }

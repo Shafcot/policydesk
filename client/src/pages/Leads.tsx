@@ -118,7 +118,7 @@ export function Leads() {
                 </td>
                 <td className="muted">{tab === 'intake' ? ago(l.createdAt) : ago(l.lastContactAt)}</td>
                 <td style={overdue ? { color: 'var(--bad)', fontWeight: 600 } : undefined} className={overdue ? '' : 'muted'}>{['won', 'lost', 'recycled'].includes(l.stage) ? '—' : fdt(l.followUpAt)}</td>
-                <td><div className="row" style={{ gap: 4 }}>{l.badReason && <Pill color={BAD[l.badReason].c}>{BAD[l.badReason].n}</Pill>}{(l.flags ?? []).map((x) => <Pill key={x} color="--warn">{x === 'duplicate' ? 'Duplicate' : 'No email'}</Pill>)}</div></td>
+                <td><div className="row" style={{ gap: 4 }}>{l.badReason && <Pill color={BAD[l.badReason].c}>{BAD[l.badReason].n}</Pill>}{(l.flags ?? []).map((x) => <Pill key={x} color="--warn">{x === 'duplicate' ? 'Duplicate' : x === 'missing_phone' ? 'No phone' : 'No email'}</Pill>)}</div></td>
                 {isAdmin && <td className="r" onClick={(e) => e.stopPropagation()}><button className="icon-btn sm danger-icon" onClick={() => setDeleteOne({ id: l.id, name: fullName(l) })} aria-label={`Delete ${fullName(l)}`} title="Delete lead"><Icon name="trash" className="sm" /></button></td>}
               </tr>
             );

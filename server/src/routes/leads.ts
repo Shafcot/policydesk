@@ -51,13 +51,13 @@ leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   const rows = await db.select().from(leads).where(and(...where)).orderBy(desc(leads.createdAt)).limit(f.limit);
 
   // Flag possible duplicates (same phone appears more than once in the agency).
-  const phones = [...new Set(rows.map((r) => r.phone))];
+  const phones = [...new Set(rows.map((r) => r.phone).filter(Boolean))];
   const dupRows = phones.length
     ? await db.select({ phone: leads.phone, n: sql<number>`count(*)::int` }).from(leads)
       .where(and(eq(leads.agencyId, req.user.agencyId), inArray(leads.phone, phones))).groupBy(leads.phone)
     : [];
   const dup = new Set(dupRows.filter((d) => d.n > 1).map((d) => d.phone));
-  res.json(rows.map((r) => ({ ...r, flags: [...(!r.email ? ['missing_email'] : []), ...(dup.has(r.phone) ? ['duplicate'] : [])] })));
+  res.json(rows.map((r) => ({ ...r, flags: [...(!r.phone ? ['missing_phone'] : []), ...(!r.email ? ['missing_email'] : []), ...(r.phone && dup.has(r.phone) ? ['duplicate'] : [])] })));
 }));
 
 const NewLead = z.object({
@@ -221,7 +221,7 @@ leadsRouter.get('/queue/mine', ah<AuthedRequest>(async (req, res) => {
   const st = await getSettings(req.user.agencyId);
   const eod = new Date(); eod.setHours(23, 59, 59, 999);
   const now = Date.now();
-  const rows = await db.select().from(leads).where(and(leadScope(req.user), isNull(leads.badReason), inArray(leads.stage, ['new', 'attempted', 'followup', 'ready', 'quoted', 'requote'])));
+  const rows = await db.select().from(leads).where(and(leadScope(req.user), isNull(leads.badReason), sql`${leads.phone} <> ''`, inArray(leads.stage, ['new', 'attempted', 'followup', 'ready', 'quoted', 'requote'])));
   const q: { bucket: string; lead: typeof rows[number] }[] = [];
   rows.filter((l) => l.stage === 'new' && l.attempts < st.attemptsDay1).sort((a, b) => +b.createdAt - +a.createdAt).forEach((lead) => q.push({ bucket: 'new', lead }));
   rows.filter((l) => l.stage === 'followup' && l.callbackRequested && l.followUpAt && +l.followUpAt <= +eod).sort((a, b) => +a.followUpAt! - +b.followUpAt!).forEach((lead) => q.push({ bucket: 'callback', lead }));
@@ -241,10 +241,13 @@ leadsRouter.post('/import', requireAdmin, ah<AuthedRequest>(async (req, res) => 
     line: z.string().max(40).optional(), source: z.string().max(80).optional(), stage: z.string().max(40).optional(),
     agentEmail: z.string().max(200).optional(), notes: z.string().max(5000).optional(), createdAt: z.string().max(40).optional(),
   });
-  const b = z.object({ rows: z.array(Row).min(1).max(10000), defaultSource: z.string().min(1).max(80), autoAssign: z.boolean().default(true), runAutomations: z.boolean().default(false) }).parse(req.body);
+  const b = z.object({ rows: z.array(Row).min(1).max(10000), defaultSource: z.string().min(1).max(80), autoAssign: z.boolean().default(true), runAutomations: z.boolean().default(false),
+    /** Keep rows that have no phone number (e.g. email-only leads from an old CRM). They can't be called until a number is added. */
+    allowNoPhone: z.boolean().default(false) }).parse(req.body);
   const team = await db.query.users.findMany({ where: eq(users.agencyId, req.user.agencyId) });
-  const existing = await db.select({ phone: leads.phone }).from(leads).where(eq(leads.agencyId, req.user.agencyId));
-  const seen = new Set(existing.map((l) => l.phone.replace(/\D/g, '').slice(-10)));
+  const existing = await db.select({ phone: leads.phone, email: leads.email }).from(leads).where(eq(leads.agencyId, req.user.agencyId));
+  const seen = new Set(existing.map((l) => l.phone.replace(/\D/g, '').slice(-10)).filter((k) => k.length >= 7));
+  const seenEmail = new Set(existing.map((l) => (l.email ?? '').trim().toLowerCase()).filter(Boolean));
   const stageByName = new Map(STAGES.map((k) => [k, k] as const));
   Object.entries({ 'new': 'new', 'contact attempted': 'attempted', 'needs follow-up': 'followup', 'follow up': 'followup', 'ready to quote': 'ready', 'quoted': 'quoted', 'won': 'won', 'sold': 'won', 'lost': 'lost', 'ready for re-quote': 'requote', 'recycled': 'recycled' } as const)
     .forEach(([k, v]) => stageByName.set(k as never, v));
@@ -256,10 +259,18 @@ leadsRouter.post('/import', requireAdmin, ah<AuthedRequest>(async (req, res) => 
     const [first, ...rest] = (r.name ?? '').trim().split(/\s+/);
     const firstName = (r.firstName || first || '').trim(), lastName = (r.lastName || rest.join(' ') || '').trim();
     const phone = (r.phone ?? '').trim();
-    if (!firstName || phone.replace(/\D/g, '').length < 7) { skipped.push({ row: rowNo, reason: 'Missing name or phone' }); continue; }
-    const key = phone.replace(/\D/g, '').slice(-10);
-    if (seen.has(key)) { duplicates++; continue; }
-    seen.add(key);
+    const hasPhone = phone.replace(/\D/g, '').length >= 7;
+    if (!firstName || (!hasPhone && !b.allowNoPhone)) { skipped.push({ row: rowNo, reason: 'Missing name or phone' }); continue; }
+    const email = (r.email ?? '').trim().toLowerCase();
+    if (hasPhone) {
+      const key = phone.replace(/\D/g, '').slice(-10);
+      if (seen.has(key)) { duplicates++; continue; }
+      seen.add(key);
+    } else if (email) {
+      // No phone: the email is the only way to spot a duplicate.
+      if (seenEmail.has(email)) { duplicates++; continue; }
+    }
+    if (email) seenEmail.add(email);
     const line = LINES.find((l) => l.toLowerCase() === (r.line ?? '').trim().toLowerCase()) ?? 'Auto';
     const stage = stageByName.get((r.stage ?? '').trim().toLowerCase() as never) ?? 'new';
     let agentId = team.find((u) => u.email.toLowerCase() === (r.agentEmail ?? '').trim().toLowerCase())?.id ?? null;
@@ -267,7 +278,7 @@ leadsRouter.post('/import', requireAdmin, ah<AuthedRequest>(async (req, res) => 
     const created = r.createdAt && !Number.isNaN(Date.parse(r.createdAt)) ? new Date(r.createdAt) : new Date();
     ready.push({
       lead: {
-        agencyId: req.user.agencyId, firstName: firstName.slice(0, 80), lastName: (lastName || '-').slice(0, 80), phone, email: r.email?.trim() || null,
+        agencyId: req.user.agencyId, firstName: firstName.slice(0, 80), lastName: (lastName || '-').slice(0, 80), phone: hasPhone ? phone : '', email: r.email?.trim() || null,
         company: r.company?.trim() || null, line, type: lineType(line), source: r.source?.trim() || b.defaultSource, stage, agentId, createdAt: created, stageChangedAt: created,
       },
       note: `Imported from ${b.defaultSource}.${r.notes ? `\n\n${r.notes}` : ''}`,
@@ -284,4 +295,20 @@ leadsRouter.post('/import', requireAdmin, ah<AuthedRequest>(async (req, res) => 
   const imported = ready.length;
   if (imported) await notify(db, { agencyId: req.user.agencyId, userId: null, kind: 'lead', text: `${imported} leads imported from a spreadsheet` });
   res.json({ imported, duplicates, skipped: skipped.slice(0, 200) });
+}));
+
+/**
+ * Adds notes to leads that are already in Bliss, matched by their exact phone number (data migrations, e.g. the
+ * call/note history from the old CRM after its leads were imported). Unmatched items are counted, not created.
+ */
+leadsRouter.post('/notes/bulk', requireAdmin, ah<AuthedRequest>(async (req, res) => {
+  const b = z.object({ items: z.array(z.object({ phone: z.string().min(1).max(40), body: z.string().min(1).max(30000) })).min(1).max(2000) }).parse(req.body);
+  const phones = [...new Set(b.items.map((i) => i.phone.trim()))];
+  const found = await db.select({ id: leads.id, phone: leads.phone, createdAt: leads.createdAt }).from(leads)
+    .where(and(eq(leads.agencyId, req.user.agencyId), inArray(leads.phone, phones))).orderBy(desc(leads.createdAt));
+  const byPhone = new Map<string, string>();
+  for (const l of found) if (!byPhone.has(l.phone)) byPhone.set(l.phone, l.id); // newest lead wins
+  const rows = b.items.flatMap((i) => { const leadId = byPhone.get(i.phone.trim()); return leadId ? [{ leadId, body: i.body }] : []; });
+  for (let i = 0; i < rows.length; i += 500) await db.insert(notes).values(rows.slice(i, i + 500));
+  res.json({ added: rows.length, unmatched: b.items.length - rows.length });
 }));
