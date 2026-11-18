@@ -248,7 +248,9 @@ leadsRouter.post('/import', requireAdmin, ah<AuthedRequest>(async (req, res) => 
   const stageByName = new Map(STAGES.map((k) => [k, k] as const));
   Object.entries({ 'new': 'new', 'contact attempted': 'attempted', 'needs follow-up': 'followup', 'follow up': 'followup', 'ready to quote': 'ready', 'quoted': 'quoted', 'won': 'won', 'sold': 'won', 'lost': 'lost', 'ready for re-quote': 'requote', 'recycled': 'recycled' } as const)
     .forEach(([k, v]) => stageByName.set(k as never, v));
-  let imported = 0, duplicates = 0; const skipped: { row: number; reason: string }[] = [];
+  let duplicates = 0; const skipped: { row: number; reason: string }[] = [];
+  // Validate and map every row first, then write in bulk (large migrations send thousands of rows).
+  const ready: { lead: typeof leads.$inferInsert; note: string }[] = [];
   for (const [i, r] of b.rows.entries()) {
     const rowNo = i + 2; // header is row 1
     const [first, ...rest] = (r.name ?? '').trim().split(/\s+/);
@@ -263,14 +265,23 @@ leadsRouter.post('/import', requireAdmin, ah<AuthedRequest>(async (req, res) => 
     let agentId = team.find((u) => u.email.toLowerCase() === (r.agentEmail ?? '').trim().toLowerCase())?.id ?? null;
     if (!agentId && b.autoAssign && stage !== 'won') agentId = (await pickAgent({ agencyId: req.user.agencyId, line }))?.id ?? null;
     const created = r.createdAt && !Number.isNaN(Date.parse(r.createdAt)) ? new Date(r.createdAt) : new Date();
-    const [lead] = await db.insert(leads).values({
-      agencyId: req.user.agencyId, firstName: firstName.slice(0, 80), lastName: (lastName || '-').slice(0, 80), phone, email: r.email?.trim() || null,
-      company: r.company?.trim() || null, line, type: lineType(line), source: r.source?.trim() || b.defaultSource, stage, agentId, createdAt: created, stageChangedAt: created,
-    }).returning();
-    await db.insert(notes).values({ leadId: lead.id, body: `Imported from spreadsheet (${b.defaultSource}).${r.notes ? `\n\n${r.notes}` : ''}` });
-    if (b.runAutomations) await fire(db, 'new_lead', { agencyId: req.user.agencyId, leadId: lead.id });
-    imported++;
+    ready.push({
+      lead: {
+        agencyId: req.user.agencyId, firstName: firstName.slice(0, 80), lastName: (lastName || '-').slice(0, 80), phone, email: r.email?.trim() || null,
+        company: r.company?.trim() || null, line, type: lineType(line), source: r.source?.trim() || b.defaultSource, stage, agentId, createdAt: created, stageChangedAt: created,
+      },
+      note: `Imported from ${b.defaultSource}.${r.notes ? `\n\n${r.notes}` : ''}`,
+    });
   }
+  for (let i = 0; i < ready.length; i += 500) {
+    const part = ready.slice(i, i + 500);
+    await db.transaction(async (tx) => {
+      const ids = await tx.insert(leads).values(part.map((p) => p.lead)).returning({ id: leads.id });
+      await tx.insert(notes).values(ids.map((x, j) => ({ leadId: x.id, body: part[j].note })));
+      if (b.runAutomations) for (const x of ids) await fire(tx, 'new_lead', { agencyId: req.user.agencyId, leadId: x.id });
+    });
+  }
+  const imported = ready.length;
   if (imported) await notify(db, { agencyId: req.user.agencyId, userId: null, kind: 'lead', text: `${imported} leads imported from a spreadsheet` });
   res.json({ imported, duplicates, skipped: skipped.slice(0, 200) });
 }));
