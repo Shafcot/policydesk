@@ -26,7 +26,7 @@
     if (!token()) return reply({ ok: false, error: 'not-signed-in' });
     var attempt = function (n) {
       fetch('/api/leads/import', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token() },
-        body: JSON.stringify({ rows: d.rows, defaultSource: d.defaultSource || 'Previous CRM', autoAssign: !!d.autoAssign, runAutomations: false }) })
+        body: JSON.stringify({ rows: d.rows, defaultSource: d.defaultSource || 'Previous CRM', autoAssign: !!d.autoAssign, runAutomations: false, allowNoPhone: !!d.allowNoPhone }) })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { r: r, b: b }; }); })
         .then(function (x) {
           if (x.r.ok) { totals.batches++; totals.imported += x.b.imported; totals.duplicates += x.b.duplicates; totals.skipped += x.b.skipped.length; render(); return reply({ ok: true, imported: x.b.imported, duplicates: x.b.duplicates, skipped: x.b.skipped.length }); }
