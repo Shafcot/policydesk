@@ -11,6 +11,7 @@ import { getSettings, notify, runAutoMoves } from './rules.js';
 import { sendBroadcast } from './campaigns.js';
 import { backupDatabase } from './backup.js';
 import { deliverQueued } from '../integrations/delivery.js';
+import { sleeping } from './activity.js';
 import { syncOutlook } from '../integrations/outlook.js';
 
 const LOCK_KEY = 4207061; // only one worker process does the work at a time
@@ -133,7 +134,7 @@ export async function tick() {
 
 export function startWorker(everyMs = 15_000) {
   let busy = false;
-  const run = async () => { if (busy) return; busy = true; try { await tick(); } catch (e) { console.error('worker tick failed', e); } finally { busy = false; } };
+  const run = async () => { if (busy || sleeping()) return; busy = true; try { await tick(); } catch (e) { console.error('worker tick failed', e); } finally { busy = false; } };
   setTimeout(run, 2000);
   return setInterval(run, everyMs);
 }

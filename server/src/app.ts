@@ -21,11 +21,14 @@ import { publicRouter } from './routes/public.js';
 import { webhooks } from './integrations/webhooks.js';
 import { integrationsRouter, mediaRouter } from './routes/integrations.js';
 import { numbersRouter } from './routes/numbers.js';
+import { sleeping, touch } from './services/activity.js';
 import { callsRouter } from './routes/calls.js';
 
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
+  // Idle mode: every real request counts as activity (health checks don't, so uptime pings can't keep the database awake).
+  app.use((req, _res, next) => { if (req.path !== '/api/health') touch(); next(); });
   app.set('trust proxy', 1); // correct client IPs for rate limiting behind a load balancer
   // The CSP allows what the React app needs when served from here: Google Fonts, Twilio Voice, Firebase push, Socket.IO.
   app.use(helmet({
@@ -48,6 +51,7 @@ export function createApp() {
   app.use(express.json({ limit: '5mb' }));
 
   app.get('/api/health', async (_req, res) => {
+    if (sleeping()) return res.json({ ok: true, database: 'sleeping' }); // don't wake a paused database for a ping
     await pool.query('select 1');
     res.json({ ok: true });
   });

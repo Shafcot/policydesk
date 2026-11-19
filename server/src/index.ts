@@ -6,11 +6,12 @@ import { sendEmail } from './integrations/providers.js';
 import { startWorker } from './services/jobs.js';
 import { setTeamEmailProvider } from './services/mailer.js';
 import { attachRealtime } from './services/realtime.js';
+import { sleeping } from './services/activity.js';
 import { loadIntegrationSettings } from './integrations/store.js';
 
 // Keys saved in Settings → Integrations; refreshed every minute in case another server instance changed them.
 await loadIntegrationSettings();
-setInterval(() => { loadIntegrationSettings().catch((e) => console.error('loading integration settings failed', e)); }, 60_000).unref();
+setInterval(() => { if (sleeping()) return; loadIntegrationSettings().catch((e) => console.error('loading integration settings failed', e)); }, 60_000).unref();
 
 setTeamEmailProvider((e) => sendEmail(e).then(() => undefined), enabled.email);
 console.log('Integrations:', Object.entries(integrationStatus()).map(([k, v]) => `${k}=${v ? 'on' : 'off'}`).join(' '));
