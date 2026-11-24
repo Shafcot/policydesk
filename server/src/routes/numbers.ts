@@ -10,6 +10,7 @@ import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { cfg } from '../integrations/settings.js';
 import { toE164 } from '../integrations/phone.js';
 import { twilioClient } from '../integrations/twilio.js';
+import { insertReturning, updateReturning, rowsOf } from '../db/helpers.js';
 import { leadByPhone } from '../integrations/callflow.js';
 
 export const numbersRouter = Router();
@@ -64,7 +65,7 @@ numbersRouter.post('/admin/numbers', requireAdmin, ah<AuthedRequest>(async (req,
     else warning = 'This number is not in the connected Twilio account, so calls to it won’t reach the CRM until it is ported to Twilio.';
   }
   const row = await db.transaction(async (tx) => {
-    const [n] = await tx.insert(phoneNumbers).values({ agencyId: req.user.agencyId, number: b.number, label: b.label || null, twilioSid }).returning();
+    const [n] = await insertReturning(tx, phoneNumbers, { agencyId: req.user.agencyId, number: b.number, label: b.label || null, twilioSid });
     if (b.userId) await assign(tx, req.user.agencyId, n.id, b.userId);
     return n;
   });
@@ -104,7 +105,7 @@ numbersRouter.post('/admin/numbers/buy', requireAdmin, ah<AuthedRequest>(async (
   let warning: string | undefined;
   await connectToCrm(bought.sid).catch((e) => { warning = `Bought, but it could not be added to the Messaging Service: ${e.message}`; });
   const row = await db.transaction(async (tx) => {
-    const [n] = await tx.insert(phoneNumbers).values({ agencyId: req.user.agencyId, number: bought.phoneNumber, label: b.label || null, twilioSid: bought.sid }).returning();
+    const [n] = await insertReturning(tx, phoneNumbers, { agencyId: req.user.agencyId, number: bought.phoneNumber, label: b.label || null, twilioSid: bought.sid });
     if (b.userId) await assign(tx, req.user.agencyId, n.id, b.userId);
     return n;
   });
@@ -116,7 +117,7 @@ numbersRouter.patch('/admin/numbers/:id', requireAdmin, ah<AuthedRequest>(async 
   const id = String(req.params.id);
   await db.transaction(async (tx) => {
     if (b.label !== undefined) {
-      const [n] = await tx.update(phoneNumbers).set({ label: b.label || null }).where(and(eq(phoneNumbers.id, id), eq(phoneNumbers.agencyId, req.user.agencyId))).returning();
+      const [n] = await updateReturning(tx, phoneNumbers, { label: b.label || null }, and(eq(phoneNumbers.id, id), eq(phoneNumbers.agencyId, req.user.agencyId)));
       if (!n) throw notFound('Number not found');
     }
     if (b.userId !== undefined) await assign(tx, req.user.agencyId, id, b.userId);
@@ -160,17 +161,17 @@ numbersRouter.get('/dialpad/lookup', ah<AuthedRequest>(async (req, res) => {
  * usual sign a number is being labelled "Spam likely" — plus the Twilio caller-trust registrations that prevent it.
  */
 numbersRouter.get('/admin/numbers/health', requireAdmin, ah<AuthedRequest>(async (req, res) => {
-  const stats = await db.execute<{ number: string; calls: number; answered: number; short: number; today: number }>(sql`
+  const stats = await rowsOf<{ number: string; calls: number; answered: number; short: number; today: number }>(db, sql`
     select pn.number,
-      count(lc.id)::int as calls,
-      count(lc.id) filter (where lc.answered_at is not null)::int as answered,
-      count(lc.id) filter (where lc.answered_at is not null and lc.ended_at - lc.answered_at < interval '10 seconds')::int as short,
-      count(lc.id) filter (where lc.created_at > now() - interval '1 day')::int as today
+      count(lc.id) as calls,
+      cast(coalesce(sum(case when lc.answered_at is not null then 1 else 0 end),0) as signed) as answered,
+      cast(coalesce(sum(case when lc.answered_at is not null and timestampdiff(second, lc.answered_at, lc.ended_at) < 10 then 1 else 0 end),0) as signed) as short,
+      cast(coalesce(sum(case when lc.created_at > now() - interval 1 day then 1 else 0 end),0) as signed) as today
     from phone_numbers pn
-    left join live_calls lc on lc.agent_id = pn.user_id and lc.direction = 'out' and lc.created_at > now() - interval '7 days'
+    left join live_calls lc on lc.agent_id = pn.user_id and lc.direction = 'out' and lc.created_at > now() - interval 7 day
     where pn.agency_id = ${req.user.agencyId}
     group by pn.number`);
-  const numbers = stats.rows.map((r) => {
+  const numbers = stats.map((r) => {
     const rate = r.calls ? Math.round((r.answered / r.calls) * 100) : null;
     const flags: string[] = [];
     if (r.calls >= 30 && rate !== null && rate < 12) flags.push('Very few calls are answered. The number may be labelled “Spam likely”. Register it (below) and rest it for a few days, or swap in another number.');

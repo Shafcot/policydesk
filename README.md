@@ -4,7 +4,7 @@ All-in-one CRM for insurance agencies: leads, pipeline, power dialer, inbox, aut
 
 - **Frontend:** React 18 + TypeScript (Vite), React Router, TanStack Query
 - **Backend:** Node.js + TypeScript, Express, Drizzle ORM
-- **Database:** PostgreSQL 16 · **Queue/cache:** Redis 7 (used from Milestone 2)
+- **Database:** MySQL 8 / MariaDB 10.6+ · **Queue/cache:** Redis 7 (used from Milestone 2)
 
 ```
 client/   React app (screens, components, API client)
@@ -13,11 +13,11 @@ server/   API, business rules, database schema + migrations, seed data
 
 ## Run it locally
 
-Requirements: Node.js 20+ and Docker (for Postgres and Redis).
+Requirements: Node.js 20+ and Docker (for MySQL and Redis).
 
 ```bash
 npm install                     # installs client + server
-docker compose up -d            # starts Postgres and Redis
+docker compose up -d            # starts MySQL and Redis
 cp server/.env.example server/.env
 npm run db:migrate              # creates the tables
 npm run db:seed                 # demo agency, users, leads, policies
@@ -59,7 +59,7 @@ To test replies before the webhooks exist, admins can call `POST /api/dev/inboun
 
 ## Backups
 
-Set `BACKUP_DIR` (and optionally `BACKUP_KEEP`, default 14) and the worker writes one compressed `pg_dump` a day, keeping the newest files. Run one by hand with `npm run backup -w server`. Restore with `pg_restore --clean -d "$DATABASE_URL" <file>`. Copy the folder to off-server storage once hosting is decided.
+Set `BACKUP_DIR` (and optionally `BACKUP_KEEP`, default 14) and the worker writes one `mysqldump` a day, keeping the newest files. Run one by hand with `npm run backup -w server`. Restore with `mysql <database> < <file>`. On cPanel, its own backups also cover the database.
 
 ## Tests
 

@@ -47,7 +47,7 @@ integrationsRouter.get('/calls/:id/recording-url', ah<AuthedRequest>(async (req,
 
 integrationsRouter.post('/push/register', ah<AuthedRequest>(async (req, res) => {
   const { token } = z.object({ token: z.string().min(20).max(4096) }).parse(req.body);
-  await db.insert(deviceTokens).values({ token, userId: req.user.id }).onConflictDoUpdate({ target: deviceTokens.token, set: { userId: req.user.id } });
+  await db.insert(deviceTokens).values({ token, userId: req.user.id }).onDuplicateKeyUpdate({ set: { userId: req.user.id } });
   res.json({ ok: true });
 }));
 integrationsRouter.delete('/push/register', ah<AuthedRequest>(async (req, res) => {

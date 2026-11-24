@@ -6,12 +6,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:16-alpine
-        env: { POSTGRES_USER: policydesk, POSTGRES_PASSWORD: policydesk, POSTGRES_DB: policydesk }
-        ports: ["5432:5432"]
-        options: --health-cmd "pg_isready -U policydesk" --health-interval 5s --health-retries 10
+      mariadb:
+        image: mariadb:10.11
+        env: { MARIADB_USER: bliss, MARIADB_PASSWORD: bliss, MARIADB_ROOT_PASSWORD: root, MARIADB_DATABASE: bliss }
+        ports: ["3306:3306"]
+        options: --health-cmd "healthcheck.sh --connect --innodb_initialized" --health-interval 5s --health-retries 20
     steps:
+      - name: Let the test user create the test database
+        run: mysql -h127.0.0.1 -uroot -proot -e "GRANT ALL PRIVILEGES ON *.* TO 'bliss'@'%'; FLUSH PRIVILEGES;"
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
@@ -20,4 +22,4 @@ jobs:
       - run: npm run build
       - run: npm test
         env:
-          TEST_DATABASE_URL: postgres://policydesk:policydesk@127.0.0.1:5432/policydesk_test
+          TEST_DATABASE_URL: mysql://bliss:bliss@127.0.0.1:3306/bliss_test

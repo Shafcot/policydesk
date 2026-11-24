@@ -1,139 +1,45 @@
 # Deploying Bliss
 
-The app ships as **one Docker image**: the API, the background worker and the built React app on a single port (4000). It needs **PostgreSQL 16** and an **HTTPS** address, because Twilio, SendGrid, Facebook and Google only call webhooks over HTTPS. It is not tied to any one hosting provider.
+Bliss is one Node.js app: the API, the background worker and the built web app run in a single process on one port. It needs:
 
-## What you need
-
-| Item | Notes |
+| Requirement | Notes |
 |---|---|
-| A Docker host | Any of: Render, Railway, Fly.io, DigitalOcean App Platform / Droplet, a VPS, AWS ECS/Lightsail, Azure Container Apps. |
-| PostgreSQL 16 | Managed (recommended: daily snapshots + point-in-time restore) or the `db` service in `docker-compose.prod.yml`. |
-| A domain | e.g. `crm.agency.com`, with HTTPS (most hosts do this automatically; on a VPS use Caddy or nginx + Let's Encrypt). |
-| PostgreSQL alternatives | On hosts without Postgres (e.g. Hostinger web plans), use Neon, Supabase (set `DATABASE_SSL=no-verify` for its pooler) or any managed Postgres. |
-| Persistent disk (optional) | Mounted at `/data`, for local uploads and the built-in nightly `pg_dump` backups. Not needed if the managed database has its own backups. |
+| Node.js 20+ (22 recommended) | cPanel: **Websites & Apps → Deploy a Node.js App** (Application Manager). |
+| MySQL 8 or MariaDB 10.6+ | cPanel: **Databases → Create Database**, plus a database user with **ALL PRIVILEGES** on it. |
+| HTTPS | Twilio, SendGrid, Facebook and Google only call webhooks over HTTPS. cPanel's AutoSSL covers the domain. |
 
 ## Environment variables
 
-Start from `server/.env.example`. The ones that must be set in production:
-
-| Variable | Value |
+| Name | Value |
 |---|---|
-| `DATABASE_URL` | `postgres://user:pass@host:5432/dbname` |
-| `JWT_SECRET` | a long random string (`openssl rand -hex 32`). The server refuses to start without it. |
-| `CLIENT_ORIGIN` | the app's public address, e.g. `https://crm.agency.com` |
-| `PUBLIC_API_URL` | the same address (the app and API share one origin) |
+| `DATABASE_URL` | `mysql://USER:PASSWORD@localhost:3306/DATABASE` (URL-encode special characters in the password, e.g. `#` → `%23`) |
+| `JWT_SECRET` | A long random string (keep it secret; changing it signs everyone out) |
+| `CLIENT_ORIGIN` | The app's address, e.g. `https://bliss-erp.com` |
+| `PUBLIC_API_URL` | Same address (used for webhook URLs) |
+| `NODE_ENV` | `production` |
 
-All integration keys are optional. Each provider switches on when its keys are present; see [INTEGRATIONS.md](INTEGRATIONS.md).
+Optional: `SETUP_ADMIN_EMAIL` / `SETUP_ADMIN_PASSWORD` create the first Super Admin on first start (remove them afterwards). Provider keys (Twilio, SendGrid, OpenAI, Microsoft, Firebase) can be entered later in **Admin → Integrations**.
 
-The Firebase **web** config (`VITE_FIREBASE_*`) is compiled into the browser bundle, so pass it as **build arguments**, not runtime variables.
+## cPanel (Application Manager)
 
-Other optional variables:
-- `RUN_WORKER=false`: run the worker as its own service (`node dist/worker.js`) instead of inside the web process. Use this if you run more than one web instance. The worker is safe to run more than once (database locks), but one is enough.
-- `BACKUP_DIR` / `BACKUP_KEEP`: nightly `pg_dump` to a folder, keeping the newest N files (default 14).
+1. Upload the release zip with **File Manager** into a folder outside `public_html` (e.g. `~/bliss`) and extract it.
+2. **Deploy a Node.js App**: application path = that folder, startup file = `server.js`, domain = the site, Node.js 22, environment = production. Add the variables above.
+3. Install dependencies (the app manager's *Install dependencies* / `npm ci --omit=dev`), then start the app.
+4. On first start the app creates its tables automatically (migrations run on start).
+5. Open the site. With no agency yet, it shows the first-time setup (or uses `SETUP_ADMIN_*`).
 
-## Option A: single server with Docker Compose
+The prebuilt release already contains `server/dist` and `client/dist`, so nothing has to be compiled on the server.
+
+## Docker (any VPS)
 
 ```bash
-git clone <your repository URL> policydesk && cd policydesk
-cp server/.env.example .env.production   # fill in JWT_SECRET, CLIENT_ORIGIN, PUBLIC_API_URL, integration keys
-export POSTGRES_PASSWORD=$(openssl rand -hex 16)   # keep this somewhere safe
+cp server/.env.example .env.production   # fill it in
+export MYSQL_PASSWORD=$(openssl rand -hex 16) MYSQL_ROOT_PASSWORD=$(openssl rand -hex 16)
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Then point HTTPS at port 4000. With Caddy, for example:
+Put a TLS proxy (Caddy, nginx) in front of port 4000.
 
-```
-crm.agency.com {
-  reverse_proxy localhost:4000
-}
-```
+## Backups
 
-## Option B: a container platform (Render, Railway, Fly.io, …)
-
-1. Create a managed PostgreSQL 16 database.
-2. Create a web service from this repository using the `Dockerfile`. Port **4000**, health check `/api/health`.
-3. Set the environment variables above, plus the `VITE_FIREBASE_*` build arguments if push is used.
-4. Add the custom domain. Set `CLIENT_ORIGIN` and `PUBLIC_API_URL` to it.
-
-Database migrations run automatically every time the container starts.
-
-## Option C: Hostinger Business / Cloud hosting (Node.js web app)
-
-Hostinger's web plans run Node.js apps but don't offer PostgreSQL, so the database lives on [Neon](https://neon.tech) (free tier is enough for testing).
-
-**1. Database (Neon)**
-1. Create a Neon project in a US region.
-2. On the dashboard, click **Connect**, turn **Connection pooling off**, and copy the connection string (`postgresql://…neon.tech/neondb?sslmode=require…`). The background worker uses session locks, which the pooled connection doesn't support.
-
-**2. Web app (hPanel)**
-1. **Websites → Add website → Node.js Apps (Web App) → Import Git repository**. Connect GitHub and pick the repository, branch `main`.
-2. Pick a domain or subdomain that has no website on it (e.g. `crm.yourdomain.com`).
-3. Build settings:
-
-| Field | Value |
-|---|---|
-| Framework | Other (or Express) |
-| Node.js version | 22 |
-| Build command | `npm run build` |
-| Entry file | `server.js` |
-| Output directory | leave empty |
-
-4. Environment variables:
-
-| Variable | Value |
-|---|---|
-| `DATABASE_URL` | the Neon connection string |
-| `DATABASE_POOL_MAX` | `5` |
-| `JWT_SECRET` | 40+ random characters |
-| `CLIENT_ORIGIN` | `https://crm.yourdomain.com` |
-| `PUBLIC_API_URL` | `https://crm.yourdomain.com` |
-| `SETUP_AGENCY_NAME` | the agency's name |
-| `SETUP_ADMIN_NAME` | the Super Admin's full name |
-| `SETUP_ADMIN_EMAIL` | the Super Admin's sign-in email |
-| `SETUP_ADMIN_PASSWORD` | their password (8+ characters) |
-
-Don't set `NODE_ENV`. `server.js` switches to production itself, and the build needs the dev tools npm installs by default.
-
-5. Deploy. On start the app applies migrations and serves everything on the domain. On the first start only, it also creates the agency and Super Admin from the `SETUP_*` variables. The app starts clean: no leads, customers or sample records, just the default templates, automations and lead sources. Each push to `main` redeploys.
-6. Sign in as the Super Admin, then remove `SETUP_ADMIN_PASSWORD` from the environment variables.
-7. **Agents:** go to **Users → Invite**. Until SendGrid is connected the invite isn't emailed, so copy the link from the popup and open it (or send it to the agent) to set the agent's password.
-
-Shared hosting may suspend idle apps, which pauses scheduled automations until the next visit. For production, a Hostinger VPS (Option A) avoids that.
-
-## First sign-in
-
-The production database starts empty, and the demo seed refuses to run against production. Either set the `SETUP_*` variables described in Option C (works on every host), or create the agency and first admin once from a shell:
-
-```bash
-docker compose -f docker-compose.prod.yml exec app node dist/db/bootstrap.js "Agency Name" "Owner Name" owner@agency.com
-```
-
-On a platform, run the same command in the service's shell. The command prints a one-time link to set the password. Invite everyone else from **Users** in the app.
-
-## After deploying
-
-1. Open **Settings → Integrations** and follow [INTEGRATIONS.md](INTEGRATIONS.md) to connect each account. Copy the webhook URLs from that page.
-2. In **Settings**, set business hours and the time zone, lead routing, and the review links.
-3. Import existing leads and customers (Leads → Import; Customers & policies → Import).
-
-## Updating
-
-Pull the new code and rebuild (`docker compose -f docker-compose.prod.yml up -d --build`), or redeploy on the platform. Migrations apply on start.
-
-## Backups and restore
-
-- Managed Postgres: turn on the provider's automatic backups.
-- Built-in: set `BACKUP_DIR=/data/backups`. A compressed dump is written every night.
-- Restore: `pg_restore --clean --no-owner -d "$DATABASE_URL" policydesk-YYYY-MM-DD.dump`
-
-## Development and tests
-
-```bash
-docker compose up -d          # local Postgres
-npm install
-npm run db:migrate && npm run db:seed
-npm run dev                   # API :4000, web :5173
-npm test                      # API tests against a separate policydesk_test database
-```
-
-CI (`.github/workflows/ci.yml`) runs the typecheck, build and tests on every pull request.
+Set `BACKUP_DIR` and the worker writes one `mysqldump` per day (needs the `mysqldump` tool on the server). On cPanel, the account's own backups also include the database.

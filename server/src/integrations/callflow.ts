@@ -19,6 +19,7 @@ import { attachRecording } from './delivery.js';
 import { last10, toE164 } from './phone.js';
 import { cfg } from './settings.js';
 import { flagDeadNumber, isDeadNumber } from '../services/badleads.js';
+import { insertReturning, rowsOf } from '../db/helpers.js';
 import { requireTwilioSignature, twilioClient, voiceResponse } from './twilio.js';
 
 export const callWebhooks = Router();
@@ -48,7 +49,7 @@ function joinRoom(vr: VR, id: string, o: { label: string; start?: boolean; wait?
 }
 
 const live = (id: string) => db.query.liveCalls.findFirst({ where: eq(liveCalls.id, id) });
-const patchLive = async (id: string, v: Partial<Live>) => (await db.update(liveCalls).set(v).where(eq(liveCalls.id, id)).returning())[0];
+const patchLive = async (id: string, v: Partial<Live>): Promise<Live> => { await db.update(liveCalls).set(v).where(eq(liveCalls.id, id)); return (await db.query.liveCalls.findFirst({ where: eq(liveCalls.id, id) }))!; };
 const callerIdFor = (u: Pick<User, 'twilioNumber'> | null | undefined) => u?.twilioNumber || cfg.twilio().callerId;
 
 /** Tells the agent's browser and the admins' live-calls view what changed. */
@@ -61,8 +62,9 @@ async function push(c: Live, state?: 'ringing' | 'connected' | 'ended', extra: R
 /** On a call = no new calls routed to them. Back to available when the call ends (unless they changed it). */
 async function setOnCall(userId: string | null | undefined, on: boolean) {
   if (!userId) return;
-  const [u] = await db.update(users).set({ status: on ? 'oncall' : 'available' })
-    .where(and(eq(users.id, userId), on ? sql`${users.status} <> 'offline'` : eq(users.status, 'oncall'))).returning();
+  const [res] = await db.update(users).set({ status: on ? 'oncall' : 'available' })
+    .where(and(eq(users.id, userId), on ? sql`${users.status} <> 'offline'` : eq(users.status, 'oncall')));
+  const u = res.affectedRows ? await db.query.users.findFirst({ where: eq(users.id, userId) }) : undefined;
   if (u) { emit(u.agencyId, u.id, 'me:status', { status: u.status }); emit(u.agencyId, null, 'users:changed', {}); }
 }
 
@@ -83,7 +85,7 @@ async function endRoom(c: Live, reason: string) {
 export async function leadByPhone(phone: string, agencyId?: string) {
   const d = last10(phone);
   if (d.length < 10) return null;
-  const [l] = await db.select().from(leads).where(and(sql`right(regexp_replace(${leads.phone}, '\\D', '', 'g'), 10) = ${d}`, ...(agencyId ? [eq(leads.agencyId, agencyId)] : []))).orderBy(sql`${leads.updatedAt} desc`).limit(1);
+  const [l] = await db.select().from(leads).where(and(sql`right(regexp_replace(${leads.phone}, '[^0-9]', ''), 10) = ${d}`, ...(agencyId ? [eq(leads.agencyId, agencyId)] : []))).orderBy(sql`${leads.updatedAt} desc`).limit(1);
   return l ?? null;
 }
 
@@ -117,7 +119,7 @@ callWebhooks.post('/voice', form, requireTwilioSignature, ah(async (req, res) =>
   const to = typed ?? toE164(lead?.phone);
   if (!to) return refuse('This lead has no valid phone number.');
   if (lead) await db.update(leads).set({ lockedById: user.id }).where(eq(leads.id, lead.id));
-  const [c] = await db.insert(liveCalls).values({ agencyId: user.agencyId, direction: 'out', agentId: user.id, agentCallSid: agentSid, logCallSid: agentSid, customerNumber: to, leadId: lead?.id ?? null }).returning();
+  const [c] = await insertReturning(db, liveCalls, { agencyId: user.agencyId, direction: 'out', agentId: user.id, agentCallSid: agentSid, logCallSid: agentSid, customerNumber: to, leadId: lead?.id ?? null });
   await setOnCall(user.id, true);
   joinRoom(vr, c.id, { label: 'agent' });
   await push(c, 'ringing');
@@ -189,7 +191,7 @@ callWebhooks.post('/conf-events', form, requireTwilioSignature, ah(async (req, r
 callWebhooks.post('/conf-recording', form, requireTwilioSignature, ah(async (req, res) => {
   const c = await live(String(req.query.id));
   if (c?.logCallSid && req.body.RecordingUrl) {
-    await db.insert(callRecordings).values({ callSid: c.logCallSid, recordingSid: String(req.body.RecordingSid ?? ''), url: String(req.body.RecordingUrl), durationSec: Number(req.body.RecordingDuration ?? 0) }).onConflictDoNothing();
+    await db.insert(callRecordings).values({ callSid: c.logCallSid, recordingSid: String(req.body.RecordingSid ?? ''), url: String(req.body.RecordingUrl), durationSec: Number(req.body.RecordingDuration ?? 0) }).onDuplicateKeyUpdate({ set: { callSid: sql`call_sid` } });
     await attachRecording(c.logCallSid);
   }
   res.sendStatus(204);
@@ -266,7 +268,7 @@ async function route(vr: VR, r: { agencyId: string; candidates: string[]; anyAge
     vr.say('Sorry, nobody is available to take your call right now.');
     return voicemailTwiml(vr, { agencyId: r.agencyId, userId: voicemailFor, from: r.from, callSid: r.callSid });
   }
-  const [c] = await db.insert(liveCalls).values({ agencyId: r.agencyId, direction: 'in', agentId: agent.id, customerCallSid: r.callSid, customerNumber: r.from, leadId: r.leadId }).returning();
+  const [c] = await insertReturning(db, liveCalls, { agencyId: r.agencyId, direction: 'in', agentId: agent.id, customerCallSid: r.callSid, customerNumber: r.from, leadId: r.leadId });
   try {
     const leg = await twilioClient().calls.create({
       to: `client:${agent.id}`, from: r.from, timeout: 20,
@@ -348,11 +350,11 @@ export async function missedText(agencyId: string, userId: string | null, from: 
   if (lead?.optOut) return null;
   if (!lead) {
     // Unknown caller → a lead, so the text, any reply and the voicemail live in one place.
-    [lead] = await db.insert(leads).values({ agencyId, firstName: 'Caller', lastName: from.slice(-4), phone: from, line: 'Auto', type: 'personal', source: 'Inbound call', agentId: agent?.role === 'agent' ? agent.id : null }).returning();
+    [lead] = await insertReturning(db, leads, { agencyId, firstName: 'Caller', lastName: from.slice(-4), phone: from, line: 'Auto', type: 'personal', source: 'Inbound call', agentId: agent?.role === 'agent' ? agent.id : null });
     await db.insert(notes).values({ leadId: lead.id, body: `Created from a missed call from ${from}. Update the name after you speak with them.` });
   }
-  const recent = await db.execute(sql`select 1 from messages where lead_id = ${lead.id} and direction = 'out' and channel = 'sms' and automated = true and body like ${'%/book/%'} and created_at > now() - interval '12 hours' limit 1`);
-  if (recent.rows.length) return null;
+  const recent = await rowsOf(db, sql`select 1 from messages where lead_id = ${lead.id} and direction = 'out' and channel = 'sms' and automated = true and body like ${'%/book/%'} and created_at > now() - interval 12 hour limit 1`);
+  if (recent.length) return null;
   const owner = agent ?? (lead.agentId ? await db.query.users.findFirst({ where: eq(users.id, lead.agentId) }) : null)
     ?? (await db.query.users.findFirst({ where: and(eq(users.agencyId, agencyId), eq(users.role, 'admin')) }));
   const body = fill(st.missedCallText, await agencyLabel(agencyId)).replaceAll('{booking}', bookingUrl(owner?.bookingSlug));
@@ -366,7 +368,7 @@ callWebhooks.post('/voicemail', form, requireTwilioSignature, ah(async (req, res
   if (!agencyId || !req.body.RecordingUrl) return res.sendStatus(204);
   const userId = req.query.agent ? String(req.query.agent) : null;
   const lead = await leadByPhone(from, agencyId);
-  const [vm] = await db.insert(voicemails).values({ agencyId, userId: userId || lead?.agentId || null, leadId: lead?.id ?? null, fromNumber: from.slice(0, 20), recordingUrl: String(req.body.RecordingUrl), durationSec: Number(req.body.RecordingDuration ?? 0) }).returning();
+  const [vm] = await insertReturning(db, voicemails, { agencyId, userId: userId || lead?.agentId || null, leadId: lead?.id ?? null, fromNumber: from.slice(0, 20), recordingUrl: String(req.body.RecordingUrl), durationSec: Number(req.body.RecordingDuration ?? 0) });
   await notify(db, { agencyId, userId: vm.userId, kind: 'call', text: `New voicemail from ${lead ? `${lead.firstName} ${lead.lastName}` : from} (${vm.durationSec}s)`, leadId: lead?.id ?? null });
   emit(agencyId, vm.userId, 'voicemail:new', { id: vm.id });
   res.sendStatus(204);
@@ -462,11 +464,11 @@ callWebhooks.post('/transfer-status', form, requireTwilioSignature, ah(async (re
 async function defaultAgency() {
   const a = cfg.defaultAgencyId();
   if (a) return a;
-  const r = await db.execute<{ id: string }>(sql`select id from agencies order by created_at limit 1`);
-  return r.rows[0]?.id ?? null;
+  const r = await rowsOf<{ id: string }>(db, sql`select id from agencies order by created_at limit 1`);
+  return r[0]?.id ?? null;
 }
 async function agencyLabel(agencyId: string) {
-  const r = await db.execute<{ name: string }>(sql`select name from agencies where id = ${agencyId}`);
-  return r.rows[0]?.name ?? 'our agency';
+  const r = await rowsOf<{ name: string }>(db, sql`select name from agencies where id = ${agencyId}`);
+  return r[0]?.name ?? 'our agency';
 }
 const fill = (t: string, agency: string) => t.replaceAll('{agency}', agency);

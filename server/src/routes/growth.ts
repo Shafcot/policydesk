@@ -12,6 +12,7 @@ import { audienceFor, sendBroadcast } from '../services/campaigns.js';
 import { isBusinessTime, localParts, nextBusinessTime } from '../services/hours.js';
 import { receiveReply } from '../services/inbound.js';
 import { getSettings } from '../services/rules.js';
+import { insertReturning, updateReturning } from '../db/helpers.js';
 import { getVisibleLead } from '../services/scope.js';
 
 export const growthRouter = Router();
@@ -36,22 +37,22 @@ growthRouter.get('/automations', requireAdmin, ah<AuthedRequest>(async (req, res
   const list = await db.query.automations.findMany({ where: eq(automations.agencyId, req.user.agencyId), orderBy: [asc(automations.createdAt), asc(automations.name)] });
   const stats = list.length ? await db.select({
     id: automationRuns.automationId,
-    active: sql<number>`count(*) filter (where ${automationRuns.status} = 'active')::int`,
-    completed: sql<number>`count(*) filter (where ${automationRuns.status} = 'completed')::int`,
-    stopped: sql<number>`count(*) filter (where ${automationRuns.status} = 'stopped')::int`,
+    active: sql<number>`cast(coalesce(sum(case when ${automationRuns.status} = 'active' then 1 else 0 end),0) as signed)`,
+    completed: sql<number>`cast(coalesce(sum(case when ${automationRuns.status} = 'completed' then 1 else 0 end),0) as signed)`,
+    stopped: sql<number>`cast(coalesce(sum(case when ${automationRuns.status} = 'stopped' then 1 else 0 end),0) as signed)`,
   }).from(automationRuns).where(inArray(automationRuns.automationId, list.map((a) => a.id))).groupBy(automationRuns.automationId) : [];
   res.json(list.map((a) => ({ ...a, stats: stats.find((s) => s.id === a.id) ?? { active: 0, completed: 0, stopped: 0 } })));
 }));
 
 growthRouter.post('/automations', requireAdmin, ah<AuthedRequest>(async (req, res) => {
   const b = AutomationIn.parse(req.body);
-  const [a] = await db.insert(automations).values({ ...b, agencyId: req.user.agencyId }).returning();
+  const [a] = await insertReturning(db, automations, { ...b, agencyId: req.user.agencyId });
   res.status(201).json(a);
 }));
 
 growthRouter.put('/automations/:id', requireAdmin, ah<AuthedRequest>(async (req, res) => {
   const b = AutomationIn.parse(req.body);
-  const [a] = await db.update(automations).set({ ...b, updatedAt: new Date() }).where(and(eq(automations.id, String(req.params.id)), eq(automations.agencyId, req.user.agencyId))).returning();
+  const [a] = await updateReturning(db, automations, { ...b, updatedAt: new Date() }, and(eq(automations.id, String(req.params.id)), eq(automations.agencyId, req.user.agencyId)));
   if (!a) throw notFound('Automation not found');
   // Runs already past the end of a shortened flow finish on their next tick.
   res.json(a);
@@ -91,7 +92,7 @@ growthRouter.get('/tasks', ah<AuthedRequest>(async (req, res) => {
 growthRouter.patch('/tasks/:id', ah<AuthedRequest>(async (req, res) => {
   const { done } = z.object({ done: z.boolean() }).parse(req.body);
   const mine = req.user.role === 'admin' ? or(eq(tasks.userId, req.user.id), isNull(tasks.userId)) : eq(tasks.userId, req.user.id);
-  const [t] = await db.update(tasks).set({ doneAt: done ? new Date() : null }).where(and(eq(tasks.id, String(req.params.id)), eq(tasks.agencyId, req.user.agencyId), mine)).returning();
+  const [t] = await updateReturning(db, tasks, { doneAt: done ? new Date() : null }, and(eq(tasks.id, String(req.params.id)), eq(tasks.agencyId, req.user.agencyId), mine));
   if (!t) throw notFound('Task not found');
   res.json(t);
 }));
@@ -118,7 +119,7 @@ growthRouter.post('/campaigns/broadcast', requireAdmin, ah<AuthedRequest>(async 
   const st = await getSettings(req.user.agencyId);
   const want = b.sendAt ? new Date(b.sendAt) : new Date();
   const when = nextBusinessTime(want, st); // broadcasts only go out during business hours
-  const [c] = await db.insert(campaigns).values({ agencyId: req.user.agencyId, kind: 'broadcast', name: b.name, channel: b.channel, subject: b.subject ?? null, body: b.body, audience: b.audience, scheduledFor: when }).returning();
+  const [c] = await insertReturning(db, campaigns, { agencyId: req.user.agencyId, kind: 'broadcast', name: b.name, channel: b.channel, subject: b.subject ?? null, body: b.body, audience: b.audience, scheduledFor: when });
   if (when <= new Date() && isBusinessTime(new Date(), st)) {
     const r = await sendBroadcast(c.id);
     return res.status(201).json({ ...c, sentAt: new Date(), recipients: r?.sent ?? 0, excluded: r?.excluded ?? 0 });
@@ -128,7 +129,7 @@ growthRouter.post('/campaigns/broadcast', requireAdmin, ah<AuthedRequest>(async 
 
 growthRouter.post('/campaigns/holiday', requireAdmin, ah<AuthedRequest>(async (req, res) => {
   const b = z.object({ name: z.string().min(1).max(120), holidayDate: z.string().regex(/^\d\d-\d\d$/), body: z.string().min(1).max(1000), channel: z.enum(['sms', 'email']).default('sms') }).parse(req.body);
-  const [c] = await db.insert(campaigns).values({ ...b, agencyId: req.user.agencyId, kind: 'holiday' }).returning();
+  const [c] = await insertReturning(db, campaigns, { ...b, agencyId: req.user.agencyId, kind: 'holiday' });
   res.status(201).json(c);
 }));
 
@@ -137,7 +138,7 @@ growthRouter.patch('/campaigns/:id', requireAdmin, ah<AuthedRequest>(async (req,
   const c = await db.query.campaigns.findFirst({ where: and(eq(campaigns.id, String(req.params.id)), eq(campaigns.agencyId, req.user.agencyId)) });
   if (!c) throw notFound('Campaign not found');
   if (c.kind === 'broadcast' && c.sentAt) throw badRequest('This broadcast was already sent');
-  const [u] = await db.update(campaigns).set(b).where(eq(campaigns.id, c.id)).returning();
+  const [u] = await updateReturning(db, campaigns, b, eq(campaigns.id, c.id));
   res.json(u);
 }));
 

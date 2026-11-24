@@ -9,6 +9,7 @@ import { ah, badRequest } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { notify, runAutoMoves, setStage } from '../services/rules.js';
 import { fire } from '../services/automation.js';
+import { insertReturning } from '../db/helpers.js';
 import { getVisibleLead } from '../services/scope.js';
 
 export const notificationsRouter = Router();
@@ -44,15 +45,15 @@ wonRouter.post('/:id/won', ah<AuthedRequest>(async (req, res) => {
   const result = await db.transaction(async (tx) => {
     let cust = await tx.query.customers.findFirst({ where: eq(customers.leadId, lead.id) });
     if (!cust) {
-      [cust] = await tx.insert(customers).values({
+      [cust] = await insertReturning(tx, customers, {
         agencyId: lead.agencyId, leadId: lead.id, agentId: lead.agentId ?? req.user.id, name: `${lead.firstName} ${lead.lastName}`,
         company: lead.company, phone: lead.phone, email: lead.email, type: lead.type, dob: lead.custom.dob ?? null, source: lead.source,
-      }).returning();
+      });
     }
-    const [policy] = await tx.insert(policies).values({
+    const [policy] = await insertReturning(tx, policies, {
       customerId: cust.id, agentId: cust.agentId, policyNumber: body.policyNumber, carrier: body.carrier, line: body.line,
       premium: body.premium, effectiveDate: effective, renewalDate: renewal,
-    }).returning();
+    });
     await tx.insert(sales).values({
       agencyId: lead.agencyId, customerId: cust.id, policyId: policy.id, agentId: cust.agentId, carrier: body.carrier,
       line: body.line, source: lead.source, premium: body.premium, soldAt: new Date(),

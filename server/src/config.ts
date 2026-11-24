@@ -5,7 +5,7 @@ const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   // A port number, or a socket path when the host passes one (some shared hosts do).
   PORT: z.string().default('4000'),
-  DATABASE_URL: z.string().default('postgres://policydesk:policydesk@localhost:5432/policydesk'),
+  DATABASE_URL: z.string().default('mysql://bliss:bliss@127.0.0.1:3306/bliss'),
   JWT_SECRET: z.string().min(8).default('dev-only-secret-change-me'),
   JWT_EXPIRES_IN: z.string().default('12h'),
   CLIENT_ORIGIN: z.string().default('http://localhost:5173'),

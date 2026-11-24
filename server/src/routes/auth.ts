@@ -10,6 +10,7 @@ import { ah, badRequest, HttpError } from '../lib/http.js';
 import { requireAuth, type AuthedRequest } from '../middleware/auth.js';
 import { env } from '../config.js';
 import { sendTeamEmail } from '../services/mailer.js';
+import { updateReturning } from '../db/helpers.js';
 import { and, gt } from 'drizzle-orm';
 
 export const authRouter = Router();
@@ -41,8 +42,7 @@ authRouter.post('/accept-invite', ah(async (req, res) => {
   const { token, password } = z.object({ token: z.string().min(10), password: z.string().min(8) }).parse(req.body);
   const user = await db.query.users.findFirst({ where: eq(users.inviteToken, token) });
   if (!user) throw badRequest('This invitation link is invalid or was already used');
-  const [u] = await db.update(users).set({ passwordHash: await hashPassword(password), inviteToken: null })
-    .where(eq(users.id, user.id)).returning();
+  const [u] = await updateReturning(db, users, { passwordHash: await hashPassword(password), inviteToken: null }, eq(users.id, user.id));
   res.json({ token: signToken({ sub: u.id, agencyId: u.agencyId, role: u.role }), user: publicUser(u) });
 }));
 
@@ -64,7 +64,7 @@ authRouter.post('/forgot', resetLimiter, ah(async (req, res) => {
 
 export async function issueReset(userId: string) {
   const token = randomBytes(24).toString('hex');
-  const [u] = await db.update(users).set({ resetToken: token, resetExpiresAt: new Date(Date.now() + 3600e3) }).where(eq(users.id, userId)).returning();
+  const [u] = await updateReturning(db, users, { resetToken: token, resetExpiresAt: new Date(Date.now() + 3600e3) }, eq(users.id, userId));
   const link = `${env.CLIENT_ORIGIN}/reset-password?token=${token}`;
   await sendTeamEmail(db, { agencyId: u.agencyId, to: u.email, subject: 'Reset your Bliss password', body: `Hi ${u.name.split(' ')[0]},\n\nUse this link to set a new password (valid for 1 hour):\n${link}\n\nIf you didn't ask for this, you can ignore this email.` });
   return link;
@@ -74,6 +74,6 @@ authRouter.post('/reset', resetLimiter, ah(async (req, res) => {
   const { token, password } = z.object({ token: z.string().min(10), password: z.string().min(8) }).parse(req.body);
   const user = await db.query.users.findFirst({ where: and(eq(users.resetToken, token), gt(users.resetExpiresAt, new Date())) });
   if (!user || !user.active) throw badRequest('This reset link is invalid or has expired');
-  const [u] = await db.update(users).set({ passwordHash: await hashPassword(password), resetToken: null, resetExpiresAt: null }).where(eq(users.id, user.id)).returning();
+  const [u] = await updateReturning(db, users, { passwordHash: await hashPassword(password), resetToken: null, resetExpiresAt: null }, eq(users.id, user.id));
   res.json({ token: signToken({ sub: u.id, agencyId: u.agencyId, role: u.role }), user: publicUser(u) });
 }));

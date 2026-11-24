@@ -106,7 +106,7 @@ export async function saveIntegrationSettings(values: Record<string, string | nu
     if (clear.length) await tx.delete(integrationSettings).where(inArray(integrationSettings.key, clear));
     for (const [k, v] of set) {
       const value = encrypt(fieldDef(k)?.multiline ? v.trim() : v.trim());
-      await tx.insert(integrationSettings).values({ key: k, value }).onConflictDoUpdate({ target: integrationSettings.key, set: { value, updatedAt: new Date() } });
+      await tx.insert(integrationSettings).values({ key: k, value }).onDuplicateKeyUpdate({ set: { value, updatedAt: new Date() } });
     }
   });
   await loadIntegrationSettings();

@@ -9,6 +9,7 @@ import { LINES, lineType } from '../domain.js';
 import { ah, badRequest, notFound } from '../lib/http.js';
 import { bookLead, freeSlots } from '../services/booking.js';
 import { emitLead } from '../services/realtime.js';
+import { insertReturning } from '../db/helpers.js';
 import { getSettings } from '../services/rules.js';
 
 export const publicRouter = Router();
@@ -39,11 +40,11 @@ publicRouter.post('/book/:slug', ah(async (req, res) => {
   const digits = b.phone.replace(/\D/g, '').slice(-10);
   const result = await db.transaction(async (tx) => {
     // Match an existing lead by phone in this agency, otherwise create one owned by this agent.
-    const [existing] = await tx.select().from(leads).where(and(eq(leads.agencyId, u.agencyId), sql`right(regexp_replace(${leads.phone}, '\\D', '', 'g'), 10) = ${digits}`)).limit(1);
-    const lead = existing ?? (await tx.insert(leads).values({
+    const [existing] = await tx.select().from(leads).where(and(eq(leads.agencyId, u.agencyId), sql`right(regexp_replace(${leads.phone}, '[^0-9]', ''), 10) = ${digits}`)).limit(1);
+    const lead = existing ?? (await insertReturning(tx, leads, {
       agencyId: u.agencyId, firstName: b.firstName, lastName: b.lastName, phone: b.phone, email: b.email || null,
       line: b.line, type: lineType(b.line), source: 'Booking link', agentId: u.id,
-    }).returning())[0];
+    }))[0];
     const { when } = await bookLead(tx, { lead, agent: u, slot, tz: st.timezone, via: `through ${u.name}'s booking link`, note: b.note });
     return { lead, when };
   });

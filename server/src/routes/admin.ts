@@ -13,6 +13,7 @@ import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { getSettings, notify } from '../services/rules.js';
 import { issueReset, publicUser } from './auth.js';
 import { makeSlug } from '../lib/slug.js';
+import { insertReturning, updateReturning } from '../db/helpers.js';
 import { sendTeamEmail } from '../services/mailer.js';
 
 export const adminRouter = Router();
@@ -31,7 +32,7 @@ adminRouter.post('/users/invite', ah<AuthedRequest>(async (req, res) => {
   const email = b.email.toLowerCase().trim();
   if (await db.query.users.findFirst({ where: eq(users.email, email) })) throw badRequest('A user with that email already exists');
   const token = randomBytes(24).toString('hex');
-  const [u] = await db.insert(users).values({ ...b, email, agencyId: req.user.agencyId, inviteToken: token, status: 'offline', bookingSlug: makeSlug(b.name) }).returning();
+  const [u] = await insertReturning(db, users, { ...b, email, agencyId: req.user.agencyId, inviteToken: token, status: 'offline', bookingSlug: makeSlug(b.name) });
   const inviteLink = `${env.CLIENT_ORIGIN}/accept-invite?token=${token}`;
   await sendTeamEmail(db, { agencyId: req.user.agencyId, to: email, subject: `${req.user.name} invited you to Bliss`, body: `Hi ${b.name.split(' ')[0]},\n\n${req.user.name} invited you to join Bliss. Set your password here:\n${inviteLink}` });
   res.status(201).json({ user: publicUser(u), inviteLink });
@@ -46,7 +47,7 @@ adminRouter.patch('/users/:id', ah<AuthedRequest>(async (req, res) => {
   }).parse(req.body);
   const id = String(req.params.id);
   if (id === req.user.id && b.role === 'agent') throw badRequest('You cannot remove your own Super Admin role');
-  const [u] = await db.update(users).set(b).where(and(eq(users.id, id), eq(users.agencyId, req.user.agencyId))).returning();
+  const [u] = await updateReturning(db, users, b, and(eq(users.id, id), eq(users.agencyId, req.user.agencyId)));
   if (!u) throw notFound('User not found');
   res.json(publicUser(u));
 }));
@@ -59,7 +60,8 @@ adminRouter.delete('/users/:id', ah<AuthedRequest>(async (req, res) => {
   if (!u) throw notFound('User not found');
   const moved = await db.transaction(async (tx) => {
     await tx.update(users).set({ active: false, status: 'offline', inviteToken: null }).where(eq(users.id, id));
-    const r = await tx.update(leads).set({ agentId: null }).where(eq(leads.agentId, id)).returning({ id: leads.id });
+    const r = await tx.select({ id: leads.id }).from(leads).where(eq(leads.agentId, id));
+    await tx.update(leads).set({ agentId: null }).where(eq(leads.agentId, id));
     if (r.length) await notify(tx, { agencyId: u.agencyId, userId: null, kind: 'warn', text: `${u.name} was removed. ${r.length} leads moved to intake for reassignment.` });
     return r.length;
   });
@@ -124,19 +126,19 @@ adminRouter.patch('/settings', ah<AuthedRequest>(async (req, res) => {
 
 adminRouter.post('/lead-sources', ah<AuthedRequest>(async (req, res) => {
   const b = z.object({ name: z.string().min(1).max(80), costPerLead: z.number().min(0).default(0), isVendor: z.boolean().default(false) }).parse(req.body);
-  const [s] = await db.insert(leadSources).values({ ...b, agencyId: req.user.agencyId, webhookKey: randomBytes(16).toString('hex') }).returning();
+  const [s] = await insertReturning(db, leadSources, { ...b, agencyId: req.user.agencyId, webhookKey: randomBytes(16).toString('hex') });
   res.status(201).json(s);
 }));
 adminRouter.patch('/lead-sources/:id', ah<AuthedRequest>(async (req, res) => {
   const b = z.object({ costPerLead: z.number().min(0).optional(), isVendor: z.boolean().optional() }).parse(req.body);
-  const [s] = await db.update(leadSources).set(b).where(and(eq(leadSources.id, String(req.params.id)), eq(leadSources.agencyId, req.user.agencyId))).returning();
+  const [s] = await updateReturning(db, leadSources, b, and(eq(leadSources.id, String(req.params.id)), eq(leadSources.agencyId, req.user.agencyId)));
   if (!s) throw notFound('Source not found');
   res.json(s);
 }));
 
 /** New webhook key for a vendor (the old address stops working). */
 adminRouter.post('/lead-sources/:id/rotate-key', ah<AuthedRequest>(async (req, res) => {
-  const [s] = await db.update(leadSources).set({ webhookKey: randomBytes(16).toString('hex') }).where(and(eq(leadSources.id, String(req.params.id)), eq(leadSources.agencyId, req.user.agencyId))).returning();
+  const [s] = await updateReturning(db, leadSources, { webhookKey: randomBytes(16).toString('hex') }, and(eq(leadSources.id, String(req.params.id)), eq(leadSources.agencyId, req.user.agencyId)));
   if (!s) throw notFound('Source not found');
   res.json(s);
 }));
@@ -145,11 +147,11 @@ adminRouter.post('/lead-sources/:id/rotate-key', ah<AuthedRequest>(async (req, r
 
 const Tpl = z.object({ channel: z.enum(['sms', 'email']), name: z.string().min(1).max(80), subject: z.string().max(240).nullable().optional(), body: z.string().min(1).max(5000) });
 adminRouter.post('/templates', ah<AuthedRequest>(async (req, res) => {
-  const [t] = await db.insert(templates).values({ ...Tpl.parse(req.body), agencyId: req.user.agencyId }).returning();
+  const [t] = await insertReturning(db, templates, { ...Tpl.parse(req.body), agencyId: req.user.agencyId });
   res.status(201).json(t);
 }));
 adminRouter.patch('/templates/:id', ah<AuthedRequest>(async (req, res) => {
-  const [t] = await db.update(templates).set(Tpl.partial().parse(req.body)).where(and(eq(templates.id, String(req.params.id)), eq(templates.agencyId, req.user.agencyId))).returning();
+  const [t] = await updateReturning(db, templates, Tpl.partial().parse(req.body), and(eq(templates.id, String(req.params.id)), eq(templates.agencyId, req.user.agencyId)));
   if (!t) throw notFound('Template not found');
   res.json(t);
 }));
@@ -174,7 +176,7 @@ adminRouter.get('/bad-leads', ah<AuthedRequest>(async (req, res) => {
   const listWhere = f.reason ? and(base, eq(leads.badReason, f.reason)) : base;
   const owner = aliasedTable(users, 'owner');
   const marker = aliasedTable(users, 'marker');
-  const n = sql<number>`count(*)::int`;
+  const n = sql<number>`count(*)`;
   const [byReason, bySource, byAgent, totals, rows] = await Promise.all([
     db.select({ reason: leads.badReason, n }).from(leads).where(base).groupBy(leads.badReason),
     db.select({ source: leads.source, reason: leads.badReason, n }).from(leads).where(base).groupBy(leads.source, leads.badReason),

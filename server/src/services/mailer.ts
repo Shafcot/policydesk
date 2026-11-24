@@ -2,6 +2,7 @@
 // Stored first, then handed to the email provider (SendGrid, Milestone 3). Without a provider they stay "queued".
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
+import { insertReturning } from '../db/helpers.js';
 import { teamEmails } from '../db/schema.js';
 
 type Exec = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -13,7 +14,7 @@ let ready: () => boolean = () => true;
 export const setTeamEmailProvider = (p: TeamEmailProvider | null, isReady: () => boolean = () => true) => { provider = p; ready = isReady; };
 
 export async function sendTeamEmail(x: Exec, e: { agencyId?: string | null; to: string; subject: string; body: string }) {
-  const [row] = await x.insert(teamEmails).values({ agencyId: e.agencyId ?? null, to: e.to, subject: e.subject, body: e.body }).returning();
+  const [row] = await insertReturning(x, teamEmails, { agencyId: e.agencyId ?? null, to: e.to, subject: e.subject, body: e.body });
   if (!provider || !ready()) return row;
   // Deliver after the surrounding transaction; a failed send is recorded, never thrown to the caller.
   setImmediate(async () => {

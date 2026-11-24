@@ -4,13 +4,14 @@
  * Sign-in: admin@policydesk.test / agent maya@policydesk.test — password from SEED_PASSWORD (default "Policydesk123!").
  */
 import { sql } from 'drizzle-orm';
-import { db } from './client.js';
+import { db, pool } from './client.js';
 import {
   agencies, appointments, templates, favorites, campaigns, calls, customers, leads, leadSources, messages, notes, notifications, policies, sales, users,
 } from './schema.js';
 import { CARRIERS, COMMERCIAL_LINES, DEFAULT_SETTINGS, NOT_REACHED, PERSONAL_LINES, lineType, type CallResult, type Stage } from '../domain.js';
 import { randomBytes } from 'node:crypto';
 import { hashPassword } from '../lib/auth.js';
+import { insertReturning, rowsOf } from './helpers.js';
 import { DEFAULT_SOURCES, installAgencyDefaults } from './defaults.js';
 
 
@@ -40,15 +41,25 @@ const SUMMARY: Record<CallResult, (f: string, line: string) => string> = {
 };
 
 export async function seedDemo() {
-  await db.execute(sql`truncate team_emails, agencies, users, templates, favorites, automations, automation_runs, tasks, campaigns, job_runs, lead_sources, leads, calls, notes, messages, appointments, customers, policies, sales, notifications cascade`);
+  // Empty the demo tables (MySQL: one connection, foreign-key checks off while truncating).
+  {
+    const conn = await pool.getConnection();
+    try {
+      await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+      for (const t of ['team_emails', 'agencies', 'users', 'templates', 'favorites', 'automations', 'automation_runs', 'tasks', 'campaigns', 'job_runs', 'lead_sources', 'leads', 'calls', 'notes', 'messages', 'appointments', 'customers', 'policies', 'sales', 'notifications']) await conn.query(`TRUNCATE TABLE \`${t}\``);
+    } finally {
+      await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+      conn.release();
+    }
+  }
   const pw = await hashPassword(process.env.SEED_PASSWORD ?? 'Policydesk123!');
 
-  const [agency] = await db.insert(agencies).values({
+  const [agency] = await insertReturning(db, agencies, {
     name: 'Demo Insurance Agency', brandName: 'Bliss',
     settings: { ...DEFAULT_SETTINGS, teamTarget: 240000, reviewLinks: { google: 'https://g.page/r/demo/review', facebook: 'https://facebook.com/demo/reviews', yelp: 'https://yelp.com/biz/demo' } },
-  }).returning();
+  });
 
-  const [admin] = await db.insert(users).values({ agencyId: agency.id, name: 'Alex Morgan', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw, bookingSlug: 'alex' }).returning();
+  const [admin] = await insertReturning(db, users, { agencyId: agency.id, name: 'Alex Morgan', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw, bookingSlug: 'alex' });
   const agentDefs = [
     { name: 'Maya Torres', email: 'maya@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Home', 'Renters', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 42000, maxCallsPerDay: 120 },
     { name: 'Daniel Brooks', email: 'daniel@policydesk.test', hoursStart: '08:30', hoursEnd: '17:30', daysOff: ['Sat', 'Sun'], lines: ['Commercial Auto', 'General Liability', 'Workers Comp', 'BOP'], status: 'available' as const, monthlyTarget: 65000, maxCallsPerDay: 100 },
@@ -56,7 +67,7 @@ export async function seedDemo() {
     { name: 'Marcus Lee', email: 'marcus@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Commercial Auto', 'BOP', 'General Liability'], status: 'available' as const, monthlyTarget: 48000, maxCallsPerDay: 110 },
     { name: 'Elena Ruiz', email: 'elena@policydesk.test', hoursStart: '10:00', hoursEnd: '19:00', daysOff: ['Fri', 'Sat'], lines: ['Home', 'Renters', 'Auto'], status: 'offline' as const, monthlyTarget: 30000, maxCallsPerDay: 90 },
   ];
-  const agents = await db.insert(users).values(agentDefs.map((a) => ({ ...a, agencyId: agency.id, role: 'agent' as const, passwordHash: pw, minCallsPerDay: 50, bookingSlug: a.name.split(' ')[0].toLowerCase() }))).returning();
+  const agents = await insertReturning(db, users, agentDefs.map((a) => ({ ...a, agencyId: agency.id, role: 'agent' as const, passwordHash: pw, minCallsPerDay: 50, bookingSlug: a.name.split(' ')[0].toLowerCase() })));
   const maya = agents[0];
 
   await installAgencyDefaults(db, agency.id, { 'Facebook Ads': 18, 'Google Ads': 32, EverQuote: 24, MediaAlpha: 21, Instagram: 12 });
@@ -92,7 +103,7 @@ export async function seedDemo() {
       if (stage === 'ready' || stage === 'quoted') followUpAt = at(rint(-1, 2), rint(9, 16));
       if (stage === 'attempted') followUpAt = new Date(Date.now() - rint(1, 6) * 3600e3);
 
-      const [lead] = await db.insert(leads).values({
+      const [lead] = await insertReturning(db, leads, {
         agencyId: agency.id, firstName: first, lastName: last, company: type === 'commercial' ? pick(BIZ) : null, phone: phone(),
         email: rnd() < 0.08 ? null : `${first}.${last}`.toLowerCase() + '@' + pick(['gmail.com', 'yahoo.com', 'outlook.com']),
         stage, stageChangedAt: stage === 'requote' ? new Date(created.getTime() + 4 * DAY) : lastCall?.startedAt ?? created,
@@ -102,7 +113,7 @@ export async function seedDemo() {
         automation: stage === 'new' || stage === 'attempted' ? 'New-lead drip' : stage === 'requote' ? '5-month re-quote' : null,
         custom: { dob: `${1960 + rint(0, 40)}-${String(rint(1, 12)).padStart(2, '0')}-${String(rint(1, 28)).padStart(2, '0')}`, zip: String(rint(78701, 78759)), carrier: pick(CARRIERS) },
         createdAt: created,
-      }).returning();
+      });
 
       if (callRows.length) await db.insert(calls).values(callRows.map((c) => ({ ...c, leadId: lead.id })));
       await db.insert(notes).values({ leadId: lead.id, body: `Lead received from ${lead.source}. Requested ${line} quote.`, createdAt: new Date(created.getTime() + 60e3) });
@@ -118,9 +129,9 @@ export async function seedDemo() {
         await db.insert(appointments).values({ leadId: lead.id, userId: agent.id, startsAt: t, type: pick(['Quote review', 'Policy review', 'Discovery call']), status: t < new Date() ? (rnd() < 0.15 ? 'noshow' : 'done') : 'scheduled' });
       }
       if (stage === 'won' && agent) {
-        const [cust] = await db.insert(customers).values({ agencyId: agency.id, leadId: lead.id, agentId: agent.id, name: `${first} ${last}`, company: lead.company, phone: lead.phone, email: lead.email, type: lead.type, source: lead.source, createdAt: lead.stageChangedAt }).returning();
+        const [cust] = await insertReturning(db, customers, { agencyId: agency.id, leadId: lead.id, agentId: agent.id, name: `${first} ${last}`, company: lead.company, phone: lead.phone, email: lead.email, type: lead.type, source: lead.source, createdAt: lead.stageChangedAt });
         const eff = lead.stageChangedAt; const ren = new Date(eff); ren.setFullYear(ren.getFullYear() + 1);
-        const [pol] = await db.insert(policies).values({ customerId: cust.id, agentId: agent.id, policyNumber: `${type === 'commercial' ? 'CP' : 'PL'}-${rint(100000, 999999)}`, carrier: pick(CARRIERS), line, premium: quote!, effectiveDate: eff, renewalDate: ren }).returning();
+        const [pol] = await insertReturning(db, policies, { customerId: cust.id, agentId: agent.id, policyNumber: `${type === 'commercial' ? 'CP' : 'PL'}-${rint(100000, 999999)}`, carrier: pick(CARRIERS), line, premium: quote!, effectiveDate: eff, renewalDate: ren });
         await db.insert(sales).values({ agencyId: agency.id, customerId: cust.id, policyId: pol.id, agentId: agent.id, carrier: pol.carrier, line, source: lead.source, premium: quote!, soldAt: eff });
       }
     }
@@ -145,9 +156,9 @@ export async function seedDemo() {
     const agent = i < 4 ? maya : pick(agents.filter((a) => a.lines.includes(line)));
     const eff = new Date(Date.now() - rint(8, 358) * DAY); const ren = new Date(eff); ren.setFullYear(ren.getFullYear() + 1);
     const name = `${pick(FN)} ${pick(LN)}`;
-    const [cust] = await db.insert(customers).values({ agencyId: agency.id, agentId: agent.id, name, phone: phone(), email: name.toLowerCase().replace(' ', '.') + '@gmail.com', type, source: pick(sourceNames), imported: true, company: type === 'commercial' ? pick(BIZ) : null }).returning();
+    const [cust] = await insertReturning(db, customers, { agencyId: agency.id, agentId: agent.id, name, phone: phone(), email: name.toLowerCase().replace(' ', '.') + '@gmail.com', type, source: pick(sourceNames), imported: true, company: type === 'commercial' ? pick(BIZ) : null });
     const p = prem(line);
-    const [pol] = await db.insert(policies).values({ customerId: cust.id, agentId: agent.id, policyNumber: `${type === 'commercial' ? 'CP' : 'PL'}-${rint(100000, 999999)}`, carrier: pick(CARRIERS), line, premium: p, effectiveDate: eff, renewalDate: ren }).returning();
+    const [pol] = await insertReturning(db, policies, { customerId: cust.id, agentId: agent.id, policyNumber: `${type === 'commercial' ? 'CP' : 'PL'}-${rint(100000, 999999)}`, carrier: pick(CARRIERS), line, premium: p, effectiveDate: eff, renewalDate: ren });
     if (Date.now() - eff.getTime() < 200 * DAY) await db.insert(sales).values({ agencyId: agency.id, customerId: cust.id, policyId: pol.id, agentId: agent.id, carrier: pol.carrier, line, source: cust.source, premium: p, soldAt: eff });
   }
 
@@ -161,8 +172,8 @@ export async function seedDemo() {
     { agencyId: agency.id, userId: null, kind: 'renew', text: 'Upcoming renewals: several policies renew in the next 30 days' },
   ]);
 
-  const counts = await db.execute(sql`select (select count(*) from leads) leads, (select count(*) from calls) calls, (select count(*) from customers) customers, (select count(*) from sales) sales`);
-  console.log('Seeded', counts.rows[0]);
+  const counts = await rowsOf(db, sql`select (select count(*) from leads) leads, (select count(*) from calls) calls, (select count(*) from customers) customers, (select count(*) from sales) sales`);
+  console.log('Seeded', counts[0]);
   console.log(`Admin: ${admin.email} · Agent: ${maya.email} · password: ${process.env.SEED_PASSWORD ? '(SEED_PASSWORD)' : 'Policydesk123!'}`);
 }
 

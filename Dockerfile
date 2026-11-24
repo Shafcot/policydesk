@@ -13,8 +13,8 @@ ARG VITE_FIREBASE_API_KEY= VITE_FIREBASE_AUTH_DOMAIN= VITE_FIREBASE_PROJECT_ID= 
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-alpine
-# pg_dump for the daily backup job
-RUN apk add --no-cache postgresql16-client tini
+# mysqldump for the daily backup job
+RUN apk add --no-cache mysql-client tini
 WORKDIR /app
 ENV NODE_ENV=production PORT=4000 CLIENT_DIST=/app/client/dist STORAGE_LOCAL_DIR=/data/uploads
 COPY --from=build /app/package.json ./
