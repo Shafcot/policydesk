@@ -23,6 +23,7 @@ import { integrationsRouter, mediaRouter } from './routes/integrations.js';
 import { numbersRouter } from './routes/numbers.js';
 import { sleeping, touch } from './services/activity.js';
 import { callsRouter } from './routes/calls.js';
+import { transferRouter } from './routes/transfer.js';
 
 export function createApp() {
   const app = express();
@@ -72,6 +73,7 @@ export function createApp() {
   app.use('/api', integrationsRouter);
   app.use('/api', numbersRouter);
   app.use('/api', callsRouter);
+  app.use('/api', transferRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'not_found' }));
 
   // Import bridge (data migrations): the old CRM's page opens this window and posts leads to it. It must keep
