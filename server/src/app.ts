@@ -92,8 +92,9 @@ export function createApp() {
     // Production: serve the built React app from the same origin (set CLIENT_DIST, e.g. ../client/dist).
     const dist = process.env.CLIENT_DIST ? path.resolve(process.env.CLIENT_DIST) : '';
     if (dist && existsSync(path.join(dist, 'index.html'))) {
-      app.use(express.static(dist, { index: false, maxAge: '1h' }));
-      app.get('*', (_req, res) => res.sendFile(path.join(dist, 'index.html')));
+      // Hashed build files never change, so browsers keep them; everything else (index.html, theme-init.js, …) is re-checked each visit.
+      app.use(express.static(dist, { index: false, setHeaders: (res, file) => res.setHeader('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache') }));
+      app.get('*', (_req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(dist, 'index.html')); });
     }
     app.use(errorHandler);
     return app;

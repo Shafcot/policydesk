@@ -1,7 +1,16 @@
 const TOKEN_KEY = 'bliss-erp.token';
+const OLD_TOKEN_KEY = 'policydesk.token'; // earlier name; carried over once so nobody is signed out
 
 export const tokenStore = {
-  get: () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } },
+  get: () => {
+    try {
+      const t = localStorage.getItem(TOKEN_KEY);
+      if (t) return t;
+      const old = localStorage.getItem(OLD_TOKEN_KEY);
+      if (old) { localStorage.setItem(TOKEN_KEY, old); localStorage.removeItem(OLD_TOKEN_KEY); }
+      return old;
+    } catch { return null; }
+  },
   set: (t: string | null) => { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch { /* storage blocked */ } },
 };
 
