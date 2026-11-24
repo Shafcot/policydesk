@@ -71,6 +71,15 @@ describe('phone numbers', () => {
 });
 
 describe('dial pad', () => {
+  /** Another agent's lead with a real phone number that no lead of Maya's shares (row order is random with UUID ids). */
+  async function otherAgentsLead(mayaId: string, unlocked = false) {
+    const all = await db.select().from(leads);
+    const digits = (p: string) => p.replace(/\D/g, '').slice(-10);
+    const mine = new Set(all.filter((l) => l.agentId === mayaId).map((l) => digits(l.phone)));
+    const count = new Map<string, number>();
+    for (const l of all) count.set(digits(l.phone), (count.get(digits(l.phone)) ?? 0) + 1);
+    return all.find((l) => l.agentId && l.agentId !== mayaId && (!unlocked || !l.lockedById) && digits(l.phone).length === 10 && !mine.has(digits(l.phone)) && count.get(digits(l.phone)) === 1)!;
+  }
   function voice(params: Record<string, string>) {
     const url = `${process.env.PUBLIC_API_URL}/webhooks/twilio/voice`;
     return request(app).post('/webhooks/twilio/voice').set('x-twilio-signature', twilio.getExpectedTwilioSignature(process.env.TWILIO_AUTH_TOKEN!, url, params)).type('form').send(params);
@@ -79,7 +88,7 @@ describe('dial pad', () => {
   it('looks up typed numbers: own lead, another agent’s lead, or new', async () => {
     const maya = await user(MAYA);
     const own = await db.query.leads.findFirst({ where: eq(leads.agentId, maya.id) });
-    const other = (await db.select().from(leads)).find((l) => l.agentId && l.agentId !== maya.id)!;
+    const other = await otherAgentsLead(maya.id);
     const m = await as(MAYA);
     expect((await m.get(`/api/dialpad/lookup?phone=${encodeURIComponent(own!.phone)}`)).body.lead.id).toBe(own!.id);
     expect((await m.get(`/api/dialpad/lookup?phone=${encodeURIComponent(other.phone)}`)).body.blocked).toMatch(/another agent/);
@@ -92,7 +101,7 @@ describe('dial pad', () => {
     const maya = await user(MAYA);
     const ok = await voice({ From: `client:${maya.id}`, to: '+14155550199' });
     expect(ok.text).toContain('<Conference');
-    const other = (await db.select().from(leads)).find((l) => l.agentId && l.agentId !== maya.id && !l.lockedById)!;
+    const other = await otherAgentsLead(maya.id, true);
     const no = await voice({ From: `client:${maya.id}`, to: other.phone });
     expect(no.text).toContain('another agent');
     expect(no.text).not.toContain('<Conference');
