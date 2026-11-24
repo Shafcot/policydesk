@@ -97,16 +97,53 @@ function matchCustomField(question: string, fields: { key: string; label: string
 }
 const KNOWN = new Set(['full_name', 'fullname', 'name', 'first_name', 'firstname', 'fname', 'last_name', 'lastname', 'lname', 'phone', 'phone_number', 'phonenumber', 'mobile', 'cell', 'email', 'email_address', 'emailaddress', 'company', 'company_name', 'business_name', 'line', 'product', 'insurance_type', 'coverage', 'lob', 'zip', 'zip_code', 'postal_code', 'zipcode', 'google_key', 'key', 'source']);
 
+/**
+ * Flattens a vendor payload. Vendors such as MediaAlpha, EverQuote or QuoteWizard nest the person under
+ * objects like `lead.contact` or `drivers[0]`. `paths` holds every value by its full path (`lead_contact_phone`);
+ * `byKey` also makes it reachable by any trailing part of the path (`contact_phone`, `phone`). Shallower values
+ * win, so top-level fields take priority over nested ones.
+ */
+export function flattenPayload(input: unknown): { paths: Record<string, string>; byKey: Record<string, string> } {
+  const paths: Record<string, string> = {}, byKey: Record<string, string> = {};
+  const queue: [unknown, string][] = [[input, '']];
+  while (queue.length) {
+    const [v, path] = queue.shift()!;
+    if (v === null || v === undefined) continue;
+    if (Array.isArray(v)) { v.slice(0, 10).forEach((x, i) => queue.push([x, i === 0 ? path : `${path}_${i + 1}`])); continue; }
+    if (typeof v === 'object') { for (const [k, x] of Object.entries(v as Record<string, unknown>).slice(0, 200)) queue.push([x, path ? `${path}_${norm(k)}` : norm(k)]); continue; }
+    const s = String(v).trim();
+    if (!s || !path || path in paths) continue;
+    paths[path] = s;
+    const parts = path.split('_');
+    for (let i = 0; i < parts.length; i++) { const k = parts.slice(i).join('_'); if (!(k in byKey)) byKey[k] = s; }
+  }
+  return { paths, byKey };
+}
+
+const F = {
+  first: ['first_name', 'firstname', 'fname', 'given_name'],
+  last: ['last_name', 'lastname', 'lname', 'surname', 'family_name'],
+  full: ['full_name', 'fullname', 'contact_name', 'name'],
+  phone: ['phone', 'phone_number', 'phonenumber', 'primary_phone', 'home_phone', 'cell_phone', 'mobile_phone', 'day_phone', 'phone1', 'phone_1', 'mobile', 'cell', 'telephone', 'contact_phone', 'work_phone'],
+  email: ['email', 'email_address', 'emailaddress', 'primary_email', 'contact_email'],
+  company: ['company', 'company_name', 'business_name'],
+  line: ['line', 'product', 'insurance_type', 'coverage', 'lob', 'line_of_business', 'vertical', 'lead_type', 'product_type'],
+  zip: ['zip', 'zip_code', 'postal_code', 'zipcode', 'postcode'],
+};
+const USED = new Set(Object.values(F).flat());
+
 /** Normalises common field names from vendors and website forms. Anything else becomes `extra` (custom fields / note). */
-function fromFields(f: Record<string, unknown>): LeadIn {
-  const g = (...keys: string[]) => { for (const k of keys) { const v = f[k] ?? f[k.toLowerCase()]; if (v !== undefined && v !== null && String(v).trim()) return String(v).trim(); } return ''; };
-  const full = g('full_name', 'fullName', 'name');
+export function fromFields(f: Record<string, unknown>): LeadIn {
+  const { paths, byKey } = flattenPayload(f);
+  const g = (keys: string[]) => { for (const k of keys) if (byKey[k]) return byKey[k]; return ''; };
+  const full = g(F.full);
   const [fn, ...ln] = full.split(/\s+/);
+  // A path is "used" when it ends in one of the mapped field names (lead_contact_phone ends in phone).
+  const isUsed = (p: string) => { const parts = p.split('_'); for (let i = 0; i < parts.length; i++) { const k = parts.slice(i).join('_'); if (USED.has(k) || KNOWN.has(k)) return true; } return false; };
   return {
-    firstName: g('first_name', 'firstName', 'fname') || fn || '', lastName: g('last_name', 'lastName', 'lname') || ln.join(' '),
-    phone: g('phone', 'phone_number', 'phoneNumber', 'mobile', 'cell'), email: g('email', 'email_address', 'emailAddress'),
-    company: g('company', 'company_name', 'business_name'), line: g('line', 'product', 'insurance_type', 'coverage', 'lob'), zip: g('zip', 'zip_code', 'postal_code', 'zipcode'),
-    extra: Object.fromEntries(Object.entries(f).filter(([k, v]) => !KNOWN.has(norm(k)) && v !== null && v !== undefined && typeof v !== 'object' && String(v).trim()).map(([k, v]) => [k, String(v).trim().slice(0, 500)]).slice(0, 40)),
+    firstName: g(F.first) || fn || '', lastName: g(F.last) || ln.join(' '),
+    phone: g(F.phone), email: g(F.email), company: g(F.company), line: g(F.line), zip: g(F.zip),
+    extra: Object.fromEntries(Object.entries(paths).filter(([p]) => !isUsed(p)).map(([p, v]) => [p, v.slice(0, 500)]).slice(0, 40)),
   };
 }
 
