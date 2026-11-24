@@ -19,10 +19,25 @@
   $('deny').addEventListener('click', function () { pending = null; render(); });
   window.addEventListener('message', function (ev) {
     var d = ev.data || {};
-    if (d.type !== 'bliss-import' && d.type !== 'bliss-import-hello') return;
+    if (d.type !== 'bliss-import' && d.type !== 'bliss-import-hello' && d.type !== 'bliss-restore') return;
     var reply = function (res) { ev.source && ev.source.postMessage({ type: 'bliss-import-result', seq: d.seq, res: res }, ev.origin); };
     if (ev.origin !== allowed) { if (!allowed) { pending = ev.origin; render(); } return reply({ ok: false, error: 'not-allowed' }); }
     if (d.type === 'bliss-import-hello') return reply({ ok: true, ready: !!token() });
+    // Full restore into a fresh install (moving servers): uses the one-time restore key, not a sign-in.
+    if (d.type === 'bliss-restore') {
+      var url = d.table === 'begin' ? '/api/restore/begin' : '/api/restore/' + encodeURIComponent(d.table);
+      var tryRestore = function (n) {
+        fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-restore-key': String(d.key || '') }, body: JSON.stringify({ rows: d.rows || [] }) })
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { r: r, b: b }; }); })
+          .then(function (x) {
+            if (x.r.ok) { if (d.table !== 'begin') { totals.batches++; totals.imported += x.b.inserted || 0; render(); } return reply({ ok: true, inserted: x.b.inserted || 0 }); }
+            if (x.r.status >= 500 && n < 3) return setTimeout(function () { tryRestore(n + 1); }, 3000 * n);
+            totals.failed++; render(); reply({ ok: false, status: x.r.status, error: x.b.error || 'failed' });
+          })
+          .catch(function (e) { if (n < 3) return setTimeout(function () { tryRestore(n + 1); }, 3000 * n); totals.failed++; render(); reply({ ok: false, error: String(e) }); });
+      };
+      return tryRestore(1);
+    }
     if (!token()) return reply({ ok: false, error: 'not-signed-in' });
     var attempt = function (n) {
       fetch('/api/leads/import', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token() },

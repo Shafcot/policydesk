@@ -23,7 +23,7 @@ import { integrationsRouter, mediaRouter } from './routes/integrations.js';
 import { numbersRouter } from './routes/numbers.js';
 import { sleeping, touch } from './services/activity.js';
 import { callsRouter } from './routes/calls.js';
-import { transferRouter } from './routes/transfer.js';
+import { restoreRouter, transferRouter } from './routes/transfer.js';
 
 export function createApp() {
   const app = express();
@@ -58,6 +58,7 @@ export function createApp() {
   });
   app.use('/api/auth', authRouter);
   app.use('/api/public', publicRouter);
+  app.use('/api/restore', restoreRouter); // key-protected; off unless RESTORE_KEY is set
   // Everything below requires a signed-in user; permissions are checked per route on the server.
   app.use('/api', requireAuth);
   app.use('/api', workRouter);
