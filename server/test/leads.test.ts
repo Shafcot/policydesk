@@ -34,6 +34,29 @@ describe('lead intake', () => {
     expect(saved[0].line).toBe('Home');
   });
 
+  it('reads nested vendor payloads (MediaAlpha / EverQuote style)', async () => {
+    const src = await db.query.leadSources.findFirst({ where: eq(leadSources.name, 'Website') }) ?? await db.query.leadSources.findFirst();
+    const phone = freshPhone();
+    const body = {
+      lead_id: 'MA-123', vertical: 'auto_insurance',
+      contact: { first_name: 'Nested', last_name: 'Vendor', primary_phone: phone, email: 'nested@example.com', address: { zip: '55401', city: 'Minneapolis' } },
+      drivers: [{ first_name: 'Ignored', birth_date: '1980-02-03' }],
+      vehicles: [{ year: 2019, make: 'Honda', model: 'Civic' }],
+    };
+    const r = await request(app).post(`/webhooks/leads/${src!.webhookKey}`).send(body);
+    expect(r.status).toBe(201);
+    const [saved] = await db.select().from(leads).where(eq(leads.phone, phone));
+    expect(saved.firstName).toBe('Nested');
+    expect(saved.lastName).toBe('Vendor');
+    expect(saved.email).toBe('nested@example.com');
+    expect(saved.line).toBe('Auto');
+    const ns = await db.select().from(notes).where(eq(notes.leadId, saved.id));
+    const answers = ns.find((n) => n.body.startsWith('Form answers'))?.body ?? '';
+    expect(answers).toContain('vehicles make: Honda');
+    expect(answers).toContain('lead id: MA-123');
+    expect(answers).not.toContain(phone);
+  });
+
   it('rejects unknown webhook keys and unsigned provider webhooks', async () => {
     expect((await request(app).post('/webhooks/leads/not-a-real-key').send({ phone: '5125550000' })).status).toBe(404);
     expect((await request(app).post('/webhooks/google-ads').send({ google_key: 'x' })).status).toBe(403);
