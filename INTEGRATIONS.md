@@ -1,4 +1,4 @@
-# Connecting the client's accounts
+# Bliss ERP: connecting provider accounts
 
 Everything is already built. Sign in as the Super Admin and open **Settings → Integrations**:
 

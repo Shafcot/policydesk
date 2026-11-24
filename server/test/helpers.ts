@@ -2,7 +2,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 
 export const app = createApp();
-export const PASSWORD = 'Policydesk123!';
+export const PASSWORD = 'BlissErp123!';
 
 const tokens = new Map<string, string>();
 /** Signs in once per user per test file (the login route is rate limited). */
@@ -28,9 +28,9 @@ export async function as(email: string) {
   };
 }
 
-export const ADMIN = 'admin@policydesk.test';
-export const MAYA = 'maya@policydesk.test';
-export const DANIEL = 'daniel@policydesk.test';
+export const ADMIN = 'admin@bliss-erp.test';
+export const MAYA = 'maya@bliss-erp.test';
+export const DANIEL = 'daniel@bliss-erp.test';
 
 /** A phone number no seeded lead uses (seed numbers are 555-01xx). */
 export const freshPhone = () => `(415) ${String(200 + Math.floor(Math.random() * 700))}-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`;

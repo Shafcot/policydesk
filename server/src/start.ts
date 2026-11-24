@@ -1,4 +1,4 @@
-// Production start used by single-process hosts (Hostinger Node.js apps, Render, …):
+// Production start used by single-process hosts (cPanel / Passenger Node.js apps, Render, …):
 // applies migrations, sets up the agency + Super Admin on an empty database (from SETUP_* variables), then starts the API + worker.
 import { db } from './db/client.js';
 import { runMigrations } from './db/migrations.js';
