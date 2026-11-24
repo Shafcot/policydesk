@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
 // Tests run against a separate database (TEST_DATABASE_URL), migrated and seeded with demo data before the run.
-const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgres://policydesk:policydesk@127.0.0.1:5432/policydesk_test';
+const TEST_DB = process.env.TEST_DATABASE_URL ?? 'mysql://bliss:bliss@127.0.0.1:3306/bliss_test';
 
 export default defineConfig({
   test: {

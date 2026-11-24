@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { env } from '../config.js';
 import { db } from '../db/client.js';
 import { agencies, customers, leads, messages, users } from '../db/schema.js';
+import { insertReturning } from '../db/helpers.js';
 import { DEFAULT_SETTINGS, type AgencySettings } from '../domain.js';
 
 type Exec = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -58,11 +59,11 @@ export async function queueMessage(x: Exec, r: Recipient, msg: { channel: 'sms' 
   if (!c || c.optOut) return null;
   if (msg.channel === 'sms' && !c.phone) return null;
   if (msg.channel === 'email' && !c.email) return null;
-  const [m] = await x.insert(messages).values({
+  const [m] = await insertReturning(x, messages, {
     leadId: r.kind === 'lead' ? r.id : null, customerId: r.kind === 'customer' ? r.id : null, userId: msg.userId ?? null,
     channel: msg.channel, direction: 'out', subject: msg.channel === 'email' ? msg.subject || 'A message from your agent' : null,
     body: msg.body, automated: msg.automated ?? false, status: 'queued',
-  }).returning();
+  });
   await deliver(m.id);
   return m;
 }

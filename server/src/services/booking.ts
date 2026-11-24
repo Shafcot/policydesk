@@ -5,6 +5,7 @@ import { db } from '../db/client.js';
 import { appointments, notes, type User } from '../db/schema.js';
 import { stopRuns } from './automation.js';
 import { localParts, zonedToUtc } from './hours.js';
+import { insertReturning } from '../db/helpers.js';
 import { notify } from './rules.js';
 
 export const SLOT_MIN = 30;
@@ -49,7 +50,7 @@ type Exec = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /** Books a slot for an existing lead with this agent. Caller checks the slot is free. */
 export async function bookLead(x: Exec, a: { lead: { id: string; firstName: string; lastName: string; agentId: string | null; agencyId: string }; agent: User; slot: Date; tz: string; via: string; note?: string }) {
-  const [appt] = await x.insert(appointments).values({ leadId: a.lead.id, userId: a.lead.agentId ?? a.agent.id, startsAt: a.slot, durationMin: SLOT_MIN, type: 'Discovery call' }).returning();
+  const [appt] = await insertReturning(x, appointments, { leadId: a.lead.id, userId: a.lead.agentId ?? a.agent.id, startsAt: a.slot, durationMin: SLOT_MIN, type: 'Discovery call' });
   await x.insert(notes).values({ leadId: a.lead.id, body: `Booked a ${SLOT_MIN}-minute call ${a.via}.${a.note ? ` Note: ${a.note}` : ''}` });
   await stopRuns(x, a.lead.id, 'booking');
   const when = a.slot.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: a.tz });

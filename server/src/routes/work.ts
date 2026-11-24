@@ -10,6 +10,7 @@ import type { AuthedRequest } from '../middleware/auth.js';
 import { getSettings, notify } from '../services/rules.js';
 import { fire, stopRuns } from '../services/automation.js';
 import { queueMessage } from '../services/messaging.js';
+import { insertReturning, updateReturning, rowsOf } from '../db/helpers.js';
 import { getVisibleLead, leadScope } from '../services/scope.js';
 
 export const workRouter = Router();
@@ -18,7 +19,7 @@ export const workRouter = Router();
 
 /** Top 20 most-called contacts for this user + their favorites (SOW 3). */
 workRouter.get('/speed-dial', ah<AuthedRequest>(async (req, res) => {
-  const counts = db.select({ leadId: calls.leadId, n: sql<number>`count(*)::int`.as('n') })
+  const counts = db.select({ leadId: calls.leadId, n: sql<number>`count(*)`.as('n') })
     .from(calls).where(eq(calls.userId, req.user.id)).groupBy(calls.leadId).as('counts');
   const top = await db.select({ lead: leads, n: counts.n }).from(counts).innerJoin(leads, eq(leads.id, counts.leadId))
     .where(leadScope(req.user)).orderBy(desc(counts.n)).limit(20);
@@ -34,7 +35,7 @@ workRouter.get('/speed-dial', ah<AuthedRequest>(async (req, res) => {
 
 workRouter.put('/favorites/:leadId', ah<AuthedRequest>(async (req, res) => {
   const lead = await getVisibleLead(req.user, String(req.params.leadId));
-  await db.insert(favorites).values({ userId: req.user.id, leadId: lead.id }).onConflictDoNothing();
+  await db.insert(favorites).ignore().values({ userId: req.user.id, leadId: lead.id });
   res.json({ ok: true });
 }));
 workRouter.delete('/favorites/:leadId', ah<AuthedRequest>(async (req, res) => {
@@ -58,7 +59,7 @@ workRouter.post('/appointments', ah<AuthedRequest>(async (req, res) => {
   const body = z.object({ leadId: z.string().uuid(), startsAt: z.string().datetime(), type: z.string().min(1).max(40), durationMin: z.number().int().min(5).max(480).default(30) }).parse(req.body);
   const lead = await getVisibleLead(req.user, body.leadId);
   const userId = lead.agentId ?? req.user.id;
-  const [a] = await db.insert(appointments).values({ leadId: lead.id, userId, startsAt: new Date(body.startsAt), type: body.type, durationMin: body.durationMin }).returning();
+  const [a] = await insertReturning(db, appointments, { leadId: lead.id, userId, startsAt: new Date(body.startsAt), type: body.type, durationMin: body.durationMin });
   if (body.type === 'Call-back') await db.update(leads).set({ callbackRequested: true, followUpAt: new Date(body.startsAt), updatedAt: new Date() }).where(eq(leads.id, lead.id));
   await stopRuns(db, lead.id, 'booking'); // booking stops automations set to stop on booking (SOW 4)
   await notify(db, { agencyId: lead.agencyId, userId, kind: 'book', text: `Appointment booked: ${lead.firstName} ${lead.lastName} · ${body.type}`, leadId: lead.id });
@@ -83,7 +84,7 @@ workRouter.patch('/appointments/:id', ah<AuthedRequest>(async (req, res) => {
 /** Agents set their own working hours and days off. */
 workRouter.patch('/users/me/hours', ah<AuthedRequest>(async (req, res) => {
   const body = z.object({ hoursStart: z.string().regex(/^\d\d:\d\d$/).optional(), hoursEnd: z.string().regex(/^\d\d:\d\d$/).optional(), daysOff: z.array(z.enum(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])).optional() }).parse(req.body);
-  const [u] = await db.update(users).set(body).where(eq(users.id, req.user.id)).returning();
+  const [u] = await updateReturning(db, users, body, eq(users.id, req.user.id));
   res.json({ hoursStart: u.hoursStart, hoursEnd: u.hoursEnd, daysOff: u.daysOff });
 }));
 
@@ -93,16 +94,20 @@ workRouter.get('/inbox', ah<AuthedRequest>(async (req, res) => {
   const last = db.select({
     leadId: messages.leadId,
     lastAt: sql<string>`max(${messages.createdAt})`.as('last_at'),
-    unread: sql<number>`count(*) filter (where ${messages.direction} = 'in' and ${messages.readAt} is null)::int`.as('unread'),
-    sms: sql<number>`count(*) filter (where ${messages.channel} = 'sms')::int`.as('sms_n'),
-    email: sql<number>`count(*) filter (where ${messages.channel} = 'email')::int`.as('email_n'),
+    unread: sql<number>`cast(coalesce(sum(case when ${messages.direction} = 'in' and ${messages.readAt} is null then 1 else 0 end),0) as signed)`.as('unread'),
+    sms: sql<number>`cast(coalesce(sum(case when ${messages.channel} = 'sms' then 1 else 0 end),0) as signed)`.as('sms_n'),
+    email: sql<number>`cast(coalesce(sum(case when ${messages.channel} = 'email' then 1 else 0 end),0) as signed)`.as('email_n'),
   }).from(messages).groupBy(messages.leadId).as('last');
   const rows = await db.select({ lead: leads, lastAt: last.lastAt, unread: last.unread, sms: last.sms, email: last.email })
     .from(last).innerJoin(leads, eq(leads.id, last.leadId)).where(leadScope(req.user)).orderBy(desc(last.lastAt)).limit(200);
   const ids = rows.map((r) => r.lead.id);
   const latest = ids.length
-    ? await db.selectDistinctOn([messages.leadId], { leadId: messages.leadId, channel: messages.channel, direction: messages.direction, subject: messages.subject, body: messages.body })
-      .from(messages).where(inArray(messages.leadId, ids)).orderBy(messages.leadId, desc(messages.createdAt))
+    // Newest message per lead (window function: MySQL 8 / MariaDB 10.2+).
+    ? await rowsOf<{ leadId: string; channel: 'sms' | 'email'; direction: 'in' | 'out'; subject: string | null; body: string }>(db, sql`
+        select lead_id as leadId, channel, direction, subject, body from (
+          select m.*, row_number() over (partition by m.lead_id order by m.created_at desc) as rn
+          from messages m where m.lead_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+        ) x where x.rn = 1`)
     : [];
   const byLead = new Map(latest.map((m) => [m.leadId, m]));
   res.json(rows.map((r) => ({

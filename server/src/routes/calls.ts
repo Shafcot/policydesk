@@ -9,6 +9,7 @@ import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { cancelTransfer, completeTransfer, startTransfer } from '../integrations/callflow.js';
 import { toE164 } from '../integrations/phone.js';
 import { signPath } from '../integrations/signed.js';
+import { insertReturning } from '../db/helpers.js';
 import { enabled } from '../integrations/settings.js';
 
 export const callsRouter = Router();
@@ -86,7 +87,7 @@ callsRouter.post('/speed-dial/contacts', ah<AuthedRequest>(async (req, res) => {
   const phone = toE164(b.phone);
   if (!phone) throw badRequest('Enter a valid phone number');
   if (b.shared && req.user.role !== 'admin') throw forbidden('Only the Super Admin can share contacts with the team');
-  const [c] = await db.insert(speedDialContacts).values({ agencyId: req.user.agencyId, userId: req.user.id, name: b.name, phone, note: b.note || null, shared: b.shared }).returning();
+  const [c] = await insertReturning(db, speedDialContacts, { agencyId: req.user.agencyId, userId: req.user.id, name: b.name, phone, note: b.note || null, shared: b.shared });
   res.status(201).json(c);
 }));
 callsRouter.delete('/speed-dial/contacts/:id', ah<AuthedRequest>(async (req, res) => {

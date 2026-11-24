@@ -5,12 +5,13 @@ import { db } from '../src/db/client.js';
 import { automationRuns, automations, leads, users } from '../src/db/schema.js';
 import { fire } from '../src/services/automation.js';
 import { isDeadNumber } from '../src/services/badleads.js';
+import { insertReturning } from '../src/db/helpers.js';
 import { ADMIN, MAYA, as, freshPhone } from './helpers.js';
 
 const user = async (email: string) => (await db.query.users.findFirst({ where: eq(users.email, email) }))!;
 async function newLead(source = 'BadVendor') {
   const u = await user(MAYA);
-  const [l] = await db.insert(leads).values({ agencyId: u.agencyId, firstName: 'Bad', lastName: 'Lead', phone: freshPhone(), line: 'Auto', type: 'personal', source, agentId: u.id }).returning();
+  const [l] = await insertReturning(db, leads, { agencyId: u.agencyId, firstName: 'Bad', lastName: 'Lead', phone: freshPhone(), line: 'Auto', type: 'personal', source, agentId: u.id });
   return l;
 }
 const get = async (id: string) => (await db.query.leads.findFirst({ where: eq(leads.id, id) }))!;

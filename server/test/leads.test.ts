@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { db } from '../src/db/client.js';
-import { leadSources, leads } from '../src/db/schema.js';
+import { leadSources, leads, notes } from '../src/db/schema.js';
 import { ADMIN, app, as, freshPhone } from './helpers.js';
 
 describe('lead intake', () => {
@@ -72,7 +72,8 @@ describe('import bridge', () => {
     const r = await a.post('/api/leads/import', { rows, defaultSource: 'AgencyZoom', autoAssign: false });
     expect(r.body).toMatchObject({ imported: 620, duplicates: 1 });
     expect(r.body.skipped).toHaveLength(1);
-    const l = await db.query.leads.findFirst({ where: eq(leads.phone, p1), with: { notes: true } });
+    const l0 = await db.query.leads.findFirst({ where: eq(leads.phone, p1) });
+    const l = l0 && { ...l0, notes: await db.select().from(notes).where(eq(notes.leadId, l0.id)) };
     expect(l?.stage).toBe('quoted');
     expect(l?.createdAt.toISOString()).toBe('2024-03-05T16:00:00.000Z');
     expect(l?.notes?.[0]?.body).toContain('Old CRM #619');
@@ -99,7 +100,8 @@ describe('migration extras', () => {
     await a.post('/api/leads/import', { autoAssign: false, defaultSource: 'AgencyZoom', rows: [{ firstName: 'Has', lastName: 'History', phone }] });
     const n = await a.post('/api/leads/notes/bulk', { items: [{ phone, body: 'AgencyZoom history: called twice' }, { phone: '(000) 000-0000', body: 'nobody' }] });
     expect(n.body).toEqual({ added: 1, unmatched: 1 });
-    const withNotes = await db.query.leads.findFirst({ where: eq(leads.phone, phone), with: { notes: true } });
+    const w0 = await db.query.leads.findFirst({ where: eq(leads.phone, phone) });
+    const withNotes = w0 && { ...w0, notes: await db.select().from(notes).where(eq(notes.leadId, w0.id)) };
     expect(withNotes?.notes.some((x) => x.body.includes('called twice'))).toBe(true);
   });
 });

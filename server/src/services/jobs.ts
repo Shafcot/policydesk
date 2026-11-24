@@ -12,13 +12,15 @@ import { sendBroadcast } from './campaigns.js';
 import { backupDatabase } from './backup.js';
 import { deliverQueued } from '../integrations/delivery.js';
 import { sleeping } from './activity.js';
+import { rowsOf } from '../db/helpers.js';
 import { syncOutlook } from '../integrations/outlook.js';
 
 const LOCK_KEY = 4207061; // only one worker process does the work at a time
 
 async function once(job: string, agencyId: string, day: string, fn: () => Promise<unknown>) {
-  const r = await db.insert(jobRuns).values({ job, agencyId, day }).onConflictDoNothing().returning();
-  if (!r.length) return false;
+  // INSERT IGNORE: 1 row affected = we claimed today's run; 0 = it already ran.
+  const [r] = await db.insert(jobRuns).ignore().values({ job, agencyId, day });
+  if (!r.affectedRows) return false;
   try { await fn(); } catch (e) { console.error(`job ${job} failed`, e); await db.delete(jobRuns).where(and(eq(jobRuns.job, job), eq(jobRuns.agencyId, agencyId), eq(jobRuns.day, day))); }
   return true;
 }
@@ -42,7 +44,7 @@ async function renewals(agencyId: string) {
 /** "Follow-ups due today" notification for each agent (SOW 5). */
 async function followupsDue(agencyId: string) {
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  const rows = await db.select({ agentId: leads.agentId, n: sql<number>`count(*)::int` }).from(leads)
+  const rows = await db.select({ agentId: leads.agentId, n: sql<number>`count(*)` }).from(leads)
     .where(and(eq(leads.agencyId, agencyId), sql`${leads.followUpAt} <= ${end}`, sql`${leads.stage} not in ('won','lost','recycled')`, sql`${leads.agentId} is not null`)).groupBy(leads.agentId);
   for (const r of rows) if (r.n > 0) await notify(db, { agencyId, userId: r.agentId, kind: 'followups', text: `You have ${r.n} follow-up${r.n === 1 ? '' : 's'} due today` });
 }
@@ -72,13 +74,13 @@ async function inactiveLeads(agencyId: string) {
   const flows = await db.query.automations.findMany({ where: (a, { and, eq }) => and(eq(a.agencyId, agencyId), eq(a.trigger, 'inactive'), eq(a.active, true)) });
   for (const f of flows) {
     const days = f.triggerConfig.days ?? 45;
-    const quiet = await db.execute<{ id: string }>(sql`
+    const quiet = await rowsOf<{ id: string }>(db, sql`
       select l.id from leads l
       where l.agency_id = ${agencyId} and l.stage not in ('won', 'lost') and l.opt_out = false
-        and coalesce(l.last_contact_at, l.created_at) < now() - make_interval(days => ${days})
-        and not exists (select 1 from automation_runs r where r.automation_id = ${f.id} and r.lead_id = l.id and r.created_at > now() - make_interval(days => ${days}))
+        and coalesce(l.last_contact_at, l.created_at) < now() - interval ${days} day
+        and not exists (select 1 from automation_runs r where r.automation_id = ${f.id} and r.lead_id = l.id and r.created_at > now() - interval ${days} day)
       order by coalesce(l.last_contact_at, l.created_at) limit 200`);
-    for (const r of quiet.rows) await fire(db, 'inactive', { agencyId, leadId: r.id, days });
+    for (const r of quiet) await fire(db, 'inactive', { agencyId, leadId: r.id, days });
   }
 }
 
@@ -97,16 +99,18 @@ async function reminders() {
 }
 
 export async function tick() {
-  const { rows } = await pool.query<{ ok: boolean }>('select pg_try_advisory_lock($1) as ok', [LOCK_KEY]);
-  if (!rows[0]?.ok) return;
+  // MySQL named lock: held by this connection until released, so the same connection releases it.
+  const conn = await pool.getConnection();
+  const [got] = await conn.query('SELECT GET_LOCK(?, 0) AS ok', [`bliss_worker_${LOCK_KEY}`]);
+  if (!(got as { ok: number }[])[0]?.ok) { conn.release(); return; }
   try {
     await loadIntegrationSettings(); // pick up keys saved in Settings → Integrations (other processes)
     await processDueRuns();
     await deliverQueued();
     await syncOutlook().catch((e) => console.error('Outlook sync failed', e));
     // Calls whose end Twilio never reported (lost webhook): close them after 4 hours and free the agent.
-    await db.execute(sql`update live_calls set status = 'ended', ended_at = now(), end_reason = coalesce(end_reason, 'stale') where status in ('ringing', 'active') and created_at < now() - interval '4 hours'`);
-    await db.execute(sql`update users set status = 'available' where status = 'oncall' and not exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.status in ('ringing', 'active')) and exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.end_reason = 'stale' and lc.ended_at > now() - interval '5 minutes')`);
+    await db.execute(sql`update live_calls set status = 'ended', ended_at = now(), end_reason = coalesce(end_reason, 'stale') where status in ('ringing', 'active') and created_at < now() - interval 4 hour`);
+    await db.execute(sql`update users set status = 'available' where status = 'oncall' and not exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.status in ('ringing', 'active')) and exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.end_reason = 'stale' and lc.ended_at > now() - interval 5 minute)`);
     await reminders();
     const due = await db.query.campaigns.findMany({ where: and(eq(campaigns.kind, 'broadcast'), isNull(campaigns.sentAt), lte(campaigns.scheduledFor, new Date())) });
     for (const c of due) {
@@ -128,7 +132,8 @@ export async function tick() {
     const first = (await db.select({ id: agencies.id }).from(agencies).limit(1))[0];
     if (first && process.env.BACKUP_DIR) await once('backup', first.id, new Date().toISOString().slice(0, 10), async () => { const r = await backupDatabase(); if (r) console.log('Backup written', r.file); });
   } finally {
-    await pool.query('select pg_advisory_unlock($1)', [LOCK_KEY]);
+    await conn.query('SELECT RELEASE_LOCK(?)', [`bliss_worker_${LOCK_KEY}`]).catch(() => undefined);
+    conn.release();
   }
 }
 

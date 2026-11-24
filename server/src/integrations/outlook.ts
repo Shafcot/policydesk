@@ -58,7 +58,7 @@ export async function syncOutlook(limit = 50) {
   if (!enabled.outlook()) return 0;
   const rows = await db.select({ a: appointments, u: users, firstName: leads.firstName, lastName: leads.lastName, phone: leads.phone, line: leads.line })
     .from(appointments).innerJoin(users, eq(appointments.userId, users.id)).innerJoin(leads, eq(appointments.leadId, leads.id))
-    .where(and(or(isNull(appointments.outlookSyncedAt), gt(appointments.updatedAt, appointments.outlookSyncedAt)), gt(appointments.startsAt, sql`now() - interval '1 day'`)))
+    .where(and(or(isNull(appointments.outlookSyncedAt), gt(appointments.updatedAt, appointments.outlookSyncedAt)), gt(appointments.startsAt, sql`now() - interval 1 day`)))
     .limit(limit);
   for (const { a, u, firstName, lastName, phone, line } of rows) {
     const box = encodeURIComponent(mailbox(u));

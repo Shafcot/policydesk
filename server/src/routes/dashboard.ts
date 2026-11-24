@@ -15,12 +15,12 @@ export const dashboardRouter = Router();
 export async function callActivity(agencyId: string, since: { today: Date; week: Date; period: Date }, userId?: string) {
   const rows = await db.select({
     userId: calls.userId,
-    callsToday: sql<number>`count(*) filter (where ${calls.startedAt} >= ${since.today})::int`,
-    leadsToday: sql<number>`count(distinct ${calls.leadId}) filter (where ${calls.startedAt} >= ${since.today})::int`,
-    talkToday: sql<number>`coalesce(sum(${calls.durationSec}) filter (where ${calls.startedAt} >= ${since.today}),0)::int`,
-    talkWeek: sql<number>`coalesce(sum(${calls.durationSec}) filter (where ${calls.startedAt} >= ${since.week}),0)::int`,
-    talkMonth: sql<number>`coalesce(sum(${calls.durationSec}) filter (where ${calls.startedAt} >= ${since.period}),0)::int`,
-    callsMonth: sql<number>`count(*) filter (where ${calls.startedAt} >= ${since.period})::int`,
+    callsToday: sql<number>`cast(coalesce(sum(case when ${calls.startedAt} >= ${since.today} then 1 else 0 end),0) as signed)`,
+    leadsToday: sql<number>`count(distinct case when ${calls.startedAt} >= ${since.today} then ${calls.leadId} end)`,
+    talkToday: sql<number>`cast(coalesce(sum(case when ${calls.startedAt} >= ${since.today} then ${calls.durationSec} else 0 end),0) as signed)`,
+    talkWeek: sql<number>`cast(coalesce(sum(case when ${calls.startedAt} >= ${since.week} then ${calls.durationSec} else 0 end),0) as signed)`,
+    talkMonth: sql<number>`cast(coalesce(sum(case when ${calls.startedAt} >= ${since.period} then ${calls.durationSec} else 0 end),0) as signed)`,
+    callsMonth: sql<number>`cast(coalesce(sum(case when ${calls.startedAt} >= ${since.period} then 1 else 0 end),0) as signed)`,
   }).from(calls).innerJoin(leads, eq(calls.leadId, leads.id))
     .where(and(eq(leads.agencyId, agencyId), gte(calls.startedAt, new Date(Math.min(since.week.getTime(), since.period.getTime()))), ...(userId ? [eq(calls.userId, userId)] : [])))
     .groupBy(calls.userId);
@@ -38,16 +38,16 @@ dashboardRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   const saleScope = admin ? eq(sales.agencyId, agencyId) : and(eq(sales.agencyId, agencyId), eq(sales.agentId, u.id))!;
 
   const [stageRows, newLeads, contacted, quotedCalls, salesMonth, allLeads, wonLeads] = await Promise.all([
-    db.select({ stage: leads.stage, n: sql<number>`count(*)::int` }).from(leads).where(scope).groupBy(leads.stage),
-    db.select({ n: sql<number>`count(*)::int` }).from(leads).where(and(scope, gte(leads.createdAt, since30))),
-    db.select({ n: sql<number>`count(*)::int` }).from(leads).where(and(scope, gte(leads.lastContactAt, since30))),
-    db.select({ n: sql<number>`count(distinct ${calls.leadId})::int` }).from(calls).innerJoin(leads, eq(calls.leadId, leads.id)).where(and(scope, eq(calls.result, 'quoted'), gte(calls.startedAt, since30))),
-    db.select({ agentId: sales.agentId, n: sql<number>`count(*)::int`, total: sql<number>`coalesce(sum(${sales.premium}),0)::float` }).from(sales).where(and(saleScope, gte(sales.soldAt, period.start), lt(sales.soldAt, period.end))).groupBy(sales.agentId),
-    db.select({ n: sql<number>`count(*)::int` }).from(leads).where(scope),
-    db.select({ n: sql<number>`count(*)::int` }).from(leads).where(and(scope, eq(leads.stage, 'won'))),
+    db.select({ stage: leads.stage, n: sql<number>`count(*)` }).from(leads).where(scope).groupBy(leads.stage),
+    db.select({ n: sql<number>`count(*)` }).from(leads).where(and(scope, gte(leads.createdAt, since30))),
+    db.select({ n: sql<number>`count(*)` }).from(leads).where(and(scope, gte(leads.lastContactAt, since30))),
+    db.select({ n: sql<number>`count(distinct ${calls.leadId})` }).from(calls).innerJoin(leads, eq(calls.leadId, leads.id)).where(and(scope, eq(calls.result, 'quoted'), gte(calls.startedAt, since30))),
+    db.select({ agentId: sales.agentId, n: sql<number>`count(*)`, total: sql<number>`cast(coalesce(sum(${sales.premium}),0) as double)` }).from(sales).where(and(saleScope, gte(sales.soldAt, period.start), lt(sales.soldAt, period.end))).groupBy(sales.agentId),
+    db.select({ n: sql<number>`count(*)` }).from(leads).where(scope),
+    db.select({ n: sql<number>`count(*)` }).from(leads).where(and(scope, eq(leads.stage, 'won'))),
   ]);
 
-  const teamMonth = admin ? salesMonth : await db.select({ total: sql<number>`coalesce(sum(${sales.premium}),0)::float` }).from(sales).where(and(eq(sales.agencyId, agencyId), gte(sales.soldAt, period.start), lt(sales.soldAt, period.end)));
+  const teamMonth = admin ? salesMonth : await db.select({ total: sql<number>`cast(coalesce(sum(${sales.premium}),0) as double)` }).from(sales).where(and(eq(sales.agencyId, agencyId), gte(sales.soldAt, period.start), lt(sales.soldAt, period.end)));
   const teamRevenue = teamMonth.reduce((a, r) => a + Number(r.total), 0);
   const byStage = Object.fromEntries(STAGES.map((s) => [s, stageRows.find((r) => r.stage === s)?.n ?? 0]));
   const revenue = salesMonth.reduce((a, r) => a + Number(r.total), 0);

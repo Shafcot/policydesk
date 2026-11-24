@@ -7,6 +7,7 @@ import { AGENT_STATUSES } from '../domain.js';
 import { ah } from '../lib/http.js';
 import type { AuthedRequest } from '../middleware/auth.js';
 import { callsTodayByUser } from '../services/rules.js';
+import { updateReturning } from '../db/helpers.js';
 import { publicUser } from './auth.js';
 
 export const usersRouter = Router();
@@ -23,12 +24,12 @@ usersRouter.get('/', ah<AuthedRequest>(async (req, res) => {
 
 usersRouter.patch('/me/status', ah<AuthedRequest>(async (req, res) => {
   const { status } = z.object({ status: z.enum(AGENT_STATUSES) }).parse(req.body);
-  const [u] = await db.update(users).set({ status }).where(eq(users.id, req.user.id)).returning();
+  const [u] = await updateReturning(db, users, { status }, eq(users.id, req.user.id));
   res.json(publicUser(u));
 }));
 
 usersRouter.patch('/me/prefs', ah<AuthedRequest>(async (req, res) => {
   const { notifyByEmail } = z.object({ notifyByEmail: z.boolean() }).parse(req.body);
-  const [u] = await db.update(users).set({ notifyByEmail }).where(eq(users.id, req.user.id)).returning();
+  const [u] = await updateReturning(db, users, { notifyByEmail }, eq(users.id, req.user.id));
   res.json(publicUser(u));
 }));

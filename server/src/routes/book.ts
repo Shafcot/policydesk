@@ -1,6 +1,6 @@
 // Book of business: customers, policies, renewals, import, sales ledger, targets, reports.
 import { Router } from 'express';
-import { and, asc, desc, eq, gt, gte, ilike, lt, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, like, lt, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { agencies, calls, customers, leads, leadSources, policies, sales, users } from '../db/schema.js';
@@ -8,6 +8,7 @@ import { LINES, lineType, NOT_REACHED } from '../domain.js';
 import { ah, notFound } from '../lib/http.js';
 import { requireAdmin, type AuthedRequest } from '../middleware/auth.js';
 import { getSettings } from '../services/rules.js';
+import { insertReturning } from '../db/helpers.js';
 import { targetPeriod } from '../services/hours.js';
 
 export const bookRouter = Router();
@@ -24,25 +25,28 @@ const saleScope = (r: AuthedRequest): SQL => r.user.role === 'admin'
 bookRouter.get('/customers', ah<AuthedRequest>(async (req, res) => {
   const { q } = z.object({ q: z.string().optional() }).parse(req.query);
   const where = [custScope(req)];
-  if (q) where.push(or(ilike(customers.name, `%${q}%`), ilike(customers.phone, `%${q}%`), ilike(customers.company, `%${q}%`))!);
+  // MySQL's default collation is case-insensitive, so LIKE matches regardless of case.
+  if (q) where.push(or(like(customers.name, `%${q}%`), like(customers.phone, `%${q}%`), like(customers.company, `%${q}%`))!);
   const rows = await db.select({
     c: customers, agentName: users.name,
-    policyCount: sql<number>`(select count(*)::int from policies p where p.customer_id = ${customers.id})`,
-    premium: sql<number>`(select coalesce(sum(p.premium),0)::float from policies p where p.customer_id = ${customers.id})`,
+    policyCount: sql<number>`(select count(*) from policies p where p.customer_id = ${customers.id})`,
+    premium: sql<number>`(select cast(coalesce(sum(p.premium),0) as double) from policies p where p.customer_id = ${customers.id})`,
   }).from(customers).leftJoin(users, eq(customers.agentId, users.id)).where(and(...where)).orderBy(desc(customers.createdAt)).limit(500);
   res.json(rows.map((r) => ({ ...r.c, agentName: r.agentName, policyCount: r.policyCount, premium: Number(r.premium) })));
 }));
 
 bookRouter.get('/customers/:id', ah<AuthedRequest>(async (req, res) => {
-  const c = await db.query.customers.findFirst({ where: and(eq(customers.id, String(req.params.id)), custScope(req)), with: { policies: true } });
-  if (!c) throw notFound('Customer not found');
+  // Loaded in two queries: nested relation loading needs LATERAL joins, which MariaDB doesn't have.
+  const base = await db.query.customers.findFirst({ where: and(eq(customers.id, String(req.params.id)), custScope(req)) });
+  if (!base) throw notFound('Customer not found');
+  const c = { ...base, policies: await db.select().from(policies).where(eq(policies.customerId, base.id)) };
   const agent = c.agentId ? await db.query.users.findFirst({ where: eq(users.id, c.agentId) }) : null;
   let history = null;
   if (c.leadId) {
     const [h] = await db.select({
-      calls: sql<number>`(select count(*)::int from calls where lead_id = ${c.leadId})`,
-      messages: sql<number>`(select count(*)::int from messages where lead_id = ${c.leadId})`,
-      notes: sql<number>`(select count(*)::int from notes where lead_id = ${c.leadId})`,
+      calls: sql<number>`(select count(*) from calls where lead_id = ${c.leadId})`,
+      messages: sql<number>`(select count(*) from messages where lead_id = ${c.leadId})`,
+      notes: sql<number>`(select count(*) from notes where lead_id = ${c.leadId})`,
     }).from(agencies).limit(1);
     history = h;
   }
@@ -57,7 +61,7 @@ bookRouter.post('/customers/:id/policies', ah<AuthedRequest>(async (req, res) =>
   const b = PolicyIn.parse(req.body);
   const eff = new Date(`${b.effectiveDate}T12:00:00`); const ren = new Date(eff); ren.setFullYear(ren.getFullYear() + 1);
   const p = await db.transaction(async (tx) => {
-    const [p] = await tx.insert(policies).values({ customerId: c.id, agentId: c.agentId, policyNumber: b.policyNumber, carrier: b.carrier, line: b.line, premium: b.premium, effectiveDate: eff, renewalDate: ren }).returning();
+    const [p] = await insertReturning(tx, policies, { customerId: c.id, agentId: c.agentId, policyNumber: b.policyNumber, carrier: b.carrier, line: b.line, premium: b.premium, effectiveDate: eff, renewalDate: ren });
     await tx.insert(sales).values({ agencyId: c.agencyId, customerId: c.id, policyId: p.id, agentId: c.agentId, carrier: b.carrier, line: b.line, source: c.source, premium: b.premium, soldAt: new Date() });
     return p;
   });
@@ -88,10 +92,10 @@ bookRouter.post('/customers/import', requireAdmin, ah<AuthedRequest>(async (req,
     for (const [i, r] of rows.entries()) {
       const line = LINES.find((l) => l.toLowerCase() === (r.line ?? '').toLowerCase());
       const agent = team.find((u) => u.email.toLowerCase() === (r.agent_email ?? '').toLowerCase());
-      const [c] = await tx.insert(customers).values({
+      const [c] = await insertReturning(tx, customers, {
         agencyId: req.user.agencyId, agentId: agent?.id ?? null, name: r.name.trim(), phone: r.phone || null, email: r.email || null,
         type: r.type?.toLowerCase() === 'commercial' || (line && lineType(line) === 'commercial') ? 'commercial' : 'personal', source: 'Spreadsheet import', imported: true,
-      }).returning();
+      });
       imported++;
       if (line && r.premium && r.premium > 0) {
         const eff = r.effective_date && !Number.isNaN(Date.parse(r.effective_date)) ? new Date(r.effective_date) : new Date();
@@ -122,7 +126,7 @@ bookRouter.get('/sales', ah<AuthedRequest>(async (req, res) => {
 bookRouter.get('/targets', ah<AuthedRequest>(async (req, res) => {
   const st = await getSettings(req.user.agencyId);
   const period = targetPeriod(st);
-  const rows = await db.select({ agentId: sales.agentId, total: sql<number>`coalesce(sum(${sales.premium}),0)::float`, n: sql<number>`count(*)::int` })
+  const rows = await db.select({ agentId: sales.agentId, total: sql<number>`cast(coalesce(sum(${sales.premium}),0) as double)`, n: sql<number>`count(*)` })
     .from(sales).where(and(eq(sales.agencyId, req.user.agencyId), gte(sales.soldAt, period.start), lt(sales.soldAt, period.end))).groupBy(sales.agentId);
   const team = await db.query.users.findMany({ where: and(eq(users.agencyId, req.user.agencyId), eq(users.role, 'agent'), eq(users.active, true)), orderBy: asc(users.name) });
   // Agents see their own target, plus everyone else's when the admin switches that on.
@@ -144,24 +148,24 @@ bookRouter.get('/reports', ah<AuthedRequest>(async (req, res) => {
   // Months are the agency's target months (e.g. 20th → 19th).
   const periods = Array.from({ length: months }, (_, i) => targetPeriod(st, new Date(), i - months + 1));
   const from = periods[0].start;
-  const shift = Math.min(28, Math.max(1, st.targetStartDay || 1)) - 1;
   const sWhere = and(eq(sales.agencyId, req.user.agencyId), gte(sales.soldAt, from), ...(agentId ? [eq(sales.agentId, agentId)] : []));
   const lWhere = and(eq(leads.agencyId, req.user.agencyId), gte(leads.createdAt, from), ...(agentId ? [eq(leads.agentId, agentId)] : []));
 
   const [byAgent, bySource, byCarrier, byMonth, leadsBySource, perfCalls, leadsByAgent, sources] = await Promise.all([
-    db.select({ agentId: sales.agentId, total: sql<number>`sum(${sales.premium})::float`, n: sql<number>`count(*)::int`,
-      personal: sql<number>`coalesce(sum(${sales.premium}) filter (where ${sales.line} in ('Auto','Home','Renters','Life','Umbrella')),0)::float`,
+    db.select({ agentId: sales.agentId, total: sql<number>`cast(sum(${sales.premium}) as double)`, n: sql<number>`count(*)`,
+      personal: sql<number>`cast(coalesce(sum(case when ${sales.line} in ('Auto','Home','Renters','Life','Umbrella') then ${sales.premium} else 0 end),0) as double)`,
     }).from(sales).where(sWhere).groupBy(sales.agentId),
-    db.select({ key: sales.source, total: sql<number>`sum(${sales.premium})::float`, n: sql<number>`count(*)::int` }).from(sales).where(sWhere).groupBy(sales.source),
-    db.select({ key: sales.carrier, total: sql<number>`sum(${sales.premium})::float`, n: sql<number>`count(*)::int` }).from(sales).where(sWhere).groupBy(sales.carrier),
-    db.select({ key: sql<string>`to_char(date_trunc('month', (${sales.soldAt} at time zone ${st.timezone}) - make_interval(days => ${shift})), 'YYYY-MM')`, total: sql<number>`sum(${sales.premium})::float` }).from(sales).where(sWhere).groupBy(sql`1`),
-    db.select({ key: leads.source, n: sql<number>`count(*)::int`, won: sql<number>`count(*) filter (where ${leads.stage} = 'won')::int` }).from(leads).where(lWhere).groupBy(leads.source),
-    db.select({ userId: calls.userId, n: sql<number>`count(*)::int`,
-      contacts: sql<number>`count(*) filter (where ${calls.result} not in (${sql.join(NOT_REACHED.map((r) => sql`${r}`), sql`, `)}))::int`,
-      quotes: sql<number>`count(*) filter (where ${calls.result} = 'quoted')::int`,
-      talk: sql<number>`coalesce(sum(${calls.durationSec}),0)::int`,
+    db.select({ key: sales.source, total: sql<number>`cast(sum(${sales.premium}) as double)`, n: sql<number>`count(*)` }).from(sales).where(sWhere).groupBy(sales.source),
+    db.select({ key: sales.carrier, total: sql<number>`cast(sum(${sales.premium}) as double)`, n: sql<number>`count(*)` }).from(sales).where(sWhere).groupBy(sales.carrier),
+    // Sales in the window; bucketed into the agency's target months below (works on any MySQL, no time-zone tables needed).
+    db.select({ soldAt: sales.soldAt, premium: sales.premium }).from(sales).where(sWhere),
+    db.select({ key: leads.source, n: sql<number>`count(*)`, won: sql<number>`cast(coalesce(sum(case when ${leads.stage} = 'won' then 1 else 0 end),0) as signed)` }).from(leads).where(lWhere).groupBy(leads.source),
+    db.select({ userId: calls.userId, n: sql<number>`count(*)`,
+      contacts: sql<number>`cast(coalesce(sum(case when ${calls.result} not in (${sql.join(NOT_REACHED.map((r) => sql`${r}`), sql`, `)}) then 1 else 0 end),0) as signed)`,
+      quotes: sql<number>`cast(coalesce(sum(case when ${calls.result} = 'quoted' then 1 else 0 end),0) as signed)`,
+      talk: sql<number>`cast(coalesce(sum(${calls.durationSec}),0) as signed)`,
     }).from(calls).innerJoin(leads, eq(calls.leadId, leads.id)).where(and(eq(leads.agencyId, req.user.agencyId), gte(calls.startedAt, from), ...(agentId ? [eq(calls.userId, agentId)] : []))).groupBy(calls.userId),
-    db.select({ agentId: leads.agentId, n: sql<number>`count(*)::int`, won: sql<number>`count(*) filter (where ${leads.stage} = 'won')::int` }).from(leads).where(lWhere).groupBy(leads.agentId),
+    db.select({ agentId: leads.agentId, n: sql<number>`count(*)`, won: sql<number>`cast(coalesce(sum(case when ${leads.stage} = 'won' then 1 else 0 end),0) as signed)` }).from(leads).where(lWhere).groupBy(leads.agentId),
     db.select().from(leadSources).where(eq(leadSources.agencyId, req.user.agencyId)),
   ]);
   const team = await db.query.users.findMany({ where: and(eq(users.agencyId, req.user.agencyId), eq(users.role, 'agent')), orderBy: asc(users.name) });
@@ -170,7 +174,7 @@ bookRouter.get('/reports', ah<AuthedRequest>(async (req, res) => {
 
   res.json({
     from: from.toISOString(),
-    production: periods.map((p) => ({ month: p.key, label: p.label, premium: Number(byMonth.find((r) => r.key === p.key)?.total ?? 0) })),
+    production: periods.map((p) => ({ month: p.key, label: p.label, premium: byMonth.filter((r) => r.soldAt >= p.start && r.soldAt < p.end).reduce((t, r) => t + Number(r.premium), 0) })),
     bySource: bySource.map((r) => ({ name: r.key ?? 'Unknown', premium: Number(r.total), sold: r.n })).sort((a, b) => b.premium - a.premium),
     byCarrier: byCarrier.map((r) => ({ name: r.key, premium: Number(r.total), sold: r.n })).sort((a, b) => b.premium - a.premium),
     roi: sources.map((s) => {

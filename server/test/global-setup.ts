@@ -1,14 +1,15 @@
-// Creates the test database if needed, applies migrations and loads the demo data.
+// Recreates the test database, applies migrations and loads the demo data.
 import { spawnSync } from 'node:child_process';
-import pg from 'pg';
+import mysql from 'mysql2/promise';
 
 export default async function setup() {
-  const url = process.env.TEST_DATABASE_URL ?? 'postgres://policydesk:policydesk@127.0.0.1:5432/policydesk_test';
-  const name = new URL(url).pathname.slice(1);
-  const admin = new pg.Client({ connectionString: url.replace(/\/[^/]+$/, '/postgres') });
-  await admin.connect();
-  const { rowCount } = await admin.query('select 1 from pg_database where datname = $1', [name]);
-  if (!rowCount) await admin.query(`create database "${name.replace(/"/g, '')}"`);
+  const url = process.env.TEST_DATABASE_URL ?? 'mysql://bliss:bliss@127.0.0.1:3306/bliss_test';
+  const u = new URL(url);
+  const name = u.pathname.slice(1).replace(/`/g, '');
+  u.pathname = '/';
+  const admin = await mysql.createConnection(u.toString());
+  await admin.query(`DROP DATABASE IF EXISTS \`${name}\``);
+  await admin.query(`CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
   await admin.end();
   const env = { ...process.env, NODE_ENV: 'test', DATABASE_URL: url };
   for (const script of ['src/db/migrate.ts', 'src/db/seed.ts']) {

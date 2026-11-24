@@ -1,15 +1,17 @@
-# Local development services. Production hosting is not decided yet; this file is only for running on your machine.
+# Local development services (MySQL 8 + Redis). Production runs on the client's cPanel; see DEPLOY.md.
 services:
-  postgres:
-    image: postgres:16-alpine
+  mysql:
+    image: mysql:8.4
     environment:
-      POSTGRES_USER: policydesk
-      POSTGRES_PASSWORD: policydesk
-      POSTGRES_DB: policydesk
-    ports: ["5432:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
+      MYSQL_USER: bliss
+      MYSQL_PASSWORD: bliss
+      MYSQL_DATABASE: bliss
+      MYSQL_ROOT_PASSWORD: bliss-root
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    ports: ["3306:3306"]
+    volumes: [mysqldata:/var/lib/mysql]
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
 volumes:
-  pgdata:
+  mysqldata:

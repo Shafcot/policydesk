@@ -9,6 +9,7 @@ import { emit } from './realtime.js';
 import { sendTeamEmail } from './mailer.js';
 import { env } from '../config.js';
 import { markBad } from './badleads.js';
+import { insertReturning } from '../db/helpers.js';
 import { DEFAULT_SETTINGS, NOT_REACHED, RESULT_STAGE, STAGE_LABELS, type AgencySettings, type CallResult, type Stage } from '../domain.js';
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -20,7 +21,7 @@ export async function getSettings(agencyId: string, x: Exec = db): Promise<Agenc
 }
 
 export async function notify(x: Exec, n: { agencyId: string; userId?: string | null; kind: string; text: string; leadId?: string | null }) {
-  const [row] = await x.insert(notifications).values({ agencyId: n.agencyId, userId: n.userId ?? null, kind: n.kind, text: n.text, leadId: n.leadId ?? null }).returning();
+  const [row] = await insertReturning(x, notifications, { agencyId: n.agencyId, userId: n.userId ?? null, kind: n.kind, text: n.text, leadId: n.leadId ?? null });
   // Live push (bell + toast). Email copies of notifications are sent once SendGrid is connected.
   emit(n.agencyId, n.userId ?? null, 'notification', row);
   if (enabled.push()) {
@@ -48,7 +49,7 @@ const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); retur
 /** Calls each agent has made today, keyed by user id. */
 export async function callsTodayByUser(agencyId: string, x: Exec = db): Promise<Map<string, number>> {
   const rows = await x
-    .select({ userId: calls.userId, n: sql<number>`count(*)::int` })
+    .select({ userId: calls.userId, n: sql<number>`count(*)` })
     .from(calls).innerJoin(leads, eq(calls.leadId, leads.id))
     .where(and(eq(leads.agencyId, agencyId), gte(calls.startedAt, startOfToday())))
     .groupBy(calls.userId);

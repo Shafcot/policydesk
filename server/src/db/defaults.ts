@@ -60,7 +60,7 @@ export async function upgradeAgencyDefaults() {
       // An earlier upgrade added these switched off and never touched since: switch them on.
       if (!have.active && have.updatedAt.getTime() - have.createdAt.getTime() < 1000) {
         await db.update(automations).set({ active: true, updatedAt: new Date() })
-          .where(and(eq(automations.agencyId, a.id), inArray(automations.name, ['New-lead follow-up cadence', 'Re-contact quiet leads']), eq(automations.active, false), sql`${automations.updatedAt} - ${automations.createdAt} < interval '1 second'`));
+          .where(and(eq(automations.agencyId, a.id), inArray(automations.name, ['New-lead follow-up cadence', 'Re-contact quiet leads']), eq(automations.active, false), sql`timestampdiff(microsecond, ${automations.createdAt}, ${automations.updatedAt}) < 1000000`));
       }
       continue;
     }

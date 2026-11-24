@@ -33,7 +33,7 @@ webhooks.use('/twilio', callWebhooks);
 /** Recording finished → store it and link it to the logged call (matched on CallSid). */
 webhooks.post('/twilio/recording', form, requireTwilioSignature, ah(async (req, res) => {
   if (req.body.RecordingStatus === 'completed' && req.body.CallSid && req.body.RecordingUrl) {
-    await db.insert(callRecordings).values({ callSid: String(req.body.CallSid), recordingSid: String(req.body.RecordingSid), url: String(req.body.RecordingUrl), durationSec: Number(req.body.RecordingDuration ?? 0) }).onConflictDoNothing();
+    await db.insert(callRecordings).values({ callSid: String(req.body.CallSid), recordingSid: String(req.body.RecordingSid), url: String(req.body.RecordingUrl), durationSec: Number(req.body.RecordingDuration ?? 0) }).onDuplicateKeyUpdate({ set: { callSid: sql`call_sid` } });
     await attachRecording(String(req.body.CallSid));
   }
   res.sendStatus(204);

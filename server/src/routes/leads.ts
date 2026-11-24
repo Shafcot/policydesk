@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { appointments, calls, customers, leads, liveCalls, messages, notes, policies, users } from '../db/schema.js';
@@ -11,6 +11,7 @@ import { assertCanCall, getVisibleLead, leadScope } from '../services/scope.js';
 import { getSettings, notify, pickAgent, recordCall, setStage } from '../services/rules.js';
 import { fire, stopRuns } from '../services/automation.js';
 import { emitLead } from '../services/realtime.js';
+import { insertReturning } from '../db/helpers.js';
 import { attachRecording } from '../integrations/delivery.js';
 
 export const leadsRouter = Router();
@@ -33,9 +34,10 @@ leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   const f = ListQuery.parse(req.query);
   const where: SQL[] = [leadScope(req.user)];
   if (f.q) {
-    const like = `%${f.q.trim()}%`;
-    where.push(or(ilike(leads.firstName, like), ilike(leads.lastName, like), ilike(leads.phone, like), ilike(leads.email, like), ilike(leads.company, like),
-      sql`(${leads.firstName} || ' ' || ${leads.lastName}) ilike ${like}`)!);
+    const pattern = `%${f.q.trim()}%`;
+    // Case-insensitive through MySQL's default collation.
+    where.push(or(like(leads.firstName, pattern), like(leads.lastName, pattern), like(leads.phone, pattern), like(leads.email, pattern), like(leads.company, pattern),
+      sql`concat(${leads.firstName}, ' ', ${leads.lastName}) like ${pattern}`)!);
   }
   if (f.stage) where.push(eq(leads.stage, f.stage));
   if (f.source) where.push(eq(leads.source, f.source));
@@ -53,7 +55,7 @@ leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   // Flag possible duplicates (same phone appears more than once in the agency).
   const phones = [...new Set(rows.map((r) => r.phone).filter(Boolean))];
   const dupRows = phones.length
-    ? await db.select({ phone: leads.phone, n: sql<number>`count(*)::int` }).from(leads)
+    ? await db.select({ phone: leads.phone, n: sql<number>`count(*)` }).from(leads)
       .where(and(eq(leads.agencyId, req.user.agencyId), inArray(leads.phone, phones))).groupBy(leads.phone)
     : [];
   const dup = new Set(dupRows.filter((d) => d.n > 1).map((d) => d.phone));
@@ -81,11 +83,11 @@ leadsRouter.post('/', ah<AuthedRequest>(async (req, res) => {
 
 export async function createLead(agencyId: string, body: z.infer<typeof NewLead>, owner?: { id: string; name: string }) {
   const agent = owner ?? await pickAgent({ agencyId, line: body.line });
-  const [lead] = await db.insert(leads).values({
+  const [lead] = await insertReturning(db, leads, {
     agencyId, firstName: body.firstName, lastName: body.lastName, phone: body.phone, email: body.email || null,
     company: body.company || null, line: body.line, type: lineType(body.line), source: body.source,
     agentId: agent?.id ?? null, automation: 'New-lead drip',
-  }).returning();
+  });
   await db.insert(notes).values({ leadId: lead.id, body: `Lead received from ${body.source}. Requested ${body.line} quote.` });
   const name = `${lead.firstName} ${lead.lastName}`;
   await fire(db, 'new_lead', { agencyId, leadId: lead.id });
@@ -102,7 +104,8 @@ leadsRouter.get('/:id', ah<AuthedRequest>(async (req, res) => {
     db.select({ n: notes, userName: users.name }).from(notes).leftJoin(users, eq(notes.userId, users.id)).where(eq(notes.leadId, lead.id)).orderBy(desc(notes.createdAt)),
     db.select().from(messages).where(eq(messages.leadId, lead.id)).orderBy(asc(messages.createdAt)),
     db.select().from(appointments).where(eq(appointments.leadId, lead.id)).orderBy(desc(appointments.startsAt)),
-    db.query.customers.findFirst({ where: eq(customers.leadId, lead.id), with: { policies: true } }),
+    db.query.customers.findFirst({ where: eq(customers.leadId, lead.id) })
+      .then(async (c) => (c ? { ...c, policies: await db.select().from(policies).where(eq(policies.customerId, c.id)) } : undefined)),
   ]);
   const people = await db.query.users.findMany({ where: inArray(users.id, [lead.agentId, lead.lastCallById, lead.lockedById].filter(Boolean) as string[]) });
   const nameOf = (id: string | null) => people.find((p) => p.id === id)?.name ?? null;
@@ -166,7 +169,9 @@ leadsRouter.patch('/:id', ah<AuthedRequest>(async (req, res) => {
  *  Customers and policies created from a won lead are kept (they just lose the link to the lead). */
 leadsRouter.post('/delete', requireAdmin, ah<AuthedRequest>(async (req, res) => {
   const { ids } = z.object({ ids: z.array(z.string().uuid()).min(1).max(1000) }).parse(req.body);
-  const gone = await db.delete(leads).where(and(inArray(leads.id, ids), eq(leads.agencyId, req.user.agencyId))).returning({ id: leads.id, agentId: leads.agentId });
+  const scope = and(inArray(leads.id, ids), eq(leads.agencyId, req.user.agencyId));
+  const gone = await db.select({ id: leads.id, agentId: leads.agentId }).from(leads).where(scope);
+  await db.delete(leads).where(scope);
   for (const l of gone) emitLead(req.user.agencyId, l.agentId, 'lead:deleted', { id: l.id });
   res.json({ deleted: gone.length });
 }));
@@ -212,7 +217,7 @@ leadsRouter.post('/:id/lock', ah<AuthedRequest>(async (req, res) => {
 leadsRouter.post('/:id/notes', ah<AuthedRequest>(async (req, res) => {
   const lead = await getVisibleLead(req.user, String(req.params.id));
   const { body } = z.object({ body: z.string().min(1).max(5000) }).parse(req.body);
-  const [n] = await db.insert(notes).values({ leadId: lead.id, userId: req.user.id, body }).returning();
+  const [n] = await insertReturning(db, notes, { leadId: lead.id, userId: req.user.id, body });
   res.status(201).json({ ...n, userName: req.user.name });
 }));
 
@@ -287,7 +292,7 @@ leadsRouter.post('/import', requireAdmin, ah<AuthedRequest>(async (req, res) => 
   for (let i = 0; i < ready.length; i += 500) {
     const part = ready.slice(i, i + 500);
     await db.transaction(async (tx) => {
-      const ids = await tx.insert(leads).values(part.map((p) => p.lead)).returning({ id: leads.id });
+      const ids = await insertReturning(tx, leads, part.map((p) => p.lead));
       await tx.insert(notes).values(ids.map((x, j) => ({ leadId: x.id, body: part[j].note })));
       if (b.runAutomations) for (const x of ids) await fire(tx, 'new_lead', { agencyId: req.user.agencyId, leadId: x.id });
     });

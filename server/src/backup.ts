@@ -1,4 +1,4 @@
-// Manual backup: `npm run backup -w server` (uses BACKUP_DIR, default ./backups). Restore with: pg_restore --clean -d "$DATABASE_URL" <file>
+// Manual backup: `npm run backup -w server` (uses BACKUP_DIR, default ./backups). Restore with: mysql <database> < <file>
 import { backupDatabase } from './services/backup.js';
 
 const r = await backupDatabase(process.env.BACKUP_DIR ?? './backups');

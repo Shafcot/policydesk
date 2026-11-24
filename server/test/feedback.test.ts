@@ -7,6 +7,7 @@ import { agencies, appointments, automations, leads, leadSources, messages, note
 import { DEFAULT_SETTINGS } from '../src/domain.js';
 import { aiChat, aiConverse } from '../src/services/aichat.js';
 import { upgradeAgencyDefaults } from '../src/db/defaults.js';
+import { insertReturning } from '../src/db/helpers.js';
 import { ADMIN, DANIEL, MAYA, app, as, freshPhone } from './helpers.js';
 
 const user = async (email: string) => (await db.query.users.findFirst({ where: eq(users.email, email) }))!;
@@ -16,7 +17,7 @@ async function setSettings(patch: Record<string, unknown>) {
 }
 async function newLead(email = MAYA) {
   const u = await user(email);
-  const [l] = await db.insert(leads).values({ agencyId: u.agencyId, firstName: 'Ai', lastName: 'Tester', phone: freshPhone(), email: 'ai@example.com', line: 'Auto', type: 'personal', source: 'Referral', agentId: u.id }).returning();
+  const [l] = await insertReturning(db, leads, { agencyId: u.agencyId, firstName: 'Ai', lastName: 'Tester', phone: freshPhone(), email: 'ai@example.com', line: 'Auto', type: 'personal', source: 'Referral', agentId: u.id });
   await db.insert(messages).values({ leadId: l.id, channel: 'sms', direction: 'in', body: 'Yes I still need a quote', status: 'received' });
   return l;
 }
@@ -188,7 +189,7 @@ describe('Outlook calendar sync', () => {
       const after = await freeSlots(maya, 'America/Chicago', 3);
       expect(after.flatMap((d) => d.slots)).not.toContain(blocked);
       const lead = await newLead();
-      const [appt] = await db.insert(appointments).values({ leadId: lead.id, userId: maya.id, startsAt: new Date(Date.now() + 2 * 864e5), durationMin: 30, type: 'Discovery call' }).returning();
+      const [appt] = await insertReturning(db, appointments, { leadId: lead.id, userId: maya.id, startsAt: new Date(Date.now() + 2 * 864e5), durationMin: 30, type: 'Discovery call' });
       await syncOutlook(1000);
       const create = calls.find((c) => c.method === 'POST' && c.url.endsWith('/events') && JSON.parse(c.body!).subject.includes('Ai Tester') && c.url.includes(encodeURIComponent(maya.email)));
       expect(create).toBeTruthy();
@@ -208,7 +209,7 @@ describe('spam-likely protection', () => {
   it('reports answer rate per number and flags a low one', async () => {
     const a = await as(ADMIN);
     const base = await user(MAYA);
-    const [maya] = await db.insert(users).values({ agencyId: base.agencyId, name: 'Rep Test', email: `rep${Date.now()}@example.com`, role: 'agent' }).returning();
+    const [maya] = await insertReturning(db, users, { agencyId: base.agencyId, name: 'Rep Test', email: `rep${Date.now()}@example.com`, role: 'agent' });
     const n = await a.post('/api/admin/numbers', { number: '+15125550177', userId: maya.id });
     // 40 outbound calls this week, 2 answered
     await db.insert((await import('../src/db/schema.js')).liveCalls).values(Array.from({ length: 40 }, (_, i) => ({

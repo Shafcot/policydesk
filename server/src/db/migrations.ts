@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { migrate } from 'drizzle-orm/mysql2/migrator';
 import { db } from './client.js';
 
 /** Applies pending SQL migrations from server/drizzle (works from src/ and dist/). */
