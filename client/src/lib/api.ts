@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'policydesk.token';
+const TOKEN_KEY = 'bliss-erp.token';
 
 export const tokenStore = {
   get: () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } },

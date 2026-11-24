@@ -2,7 +2,7 @@
 import { useState } from 'react';
 
 export type Theme = 'light' | 'dark';
-const KEY = 'pd-theme';
+const KEY = 'bliss-erp.theme';
 export const currentTheme = (): Theme => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
 export function applyTheme(t: Theme) {
   if (t === 'dark') document.documentElement.dataset.theme = 'dark';

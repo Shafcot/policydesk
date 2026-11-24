@@ -1,4 +1,4 @@
-# Bliss
+# Bliss ERP
 
 All-in-one CRM for insurance agencies: leads, pipeline, power dialer, inbox, automations, policies, sales and reports. It replaces GoHighLevel, AgencyZoom, Ricochet and RingCentral.
 
@@ -24,12 +24,12 @@ npm run db:seed                 # demo agency, users, leads, policies
 npm run dev                     # API on :4000, app on http://localhost:5173
 ```
 
-Demo sign-ins (password `Policydesk123!`, or whatever you set as `SEED_PASSWORD`):
+Demo sign-ins (password `BlissErp123!`, or whatever you set as `SEED_PASSWORD`):
 
 | Role | Email |
 | --- | --- |
-| Super Admin | admin@policydesk.test |
-| Agent | maya@policydesk.test (also daniel, priya, marcus, elena) |
+| Super Admin | admin@bliss-erp.test |
+| Agent | maya@bliss-erp.test (also daniel, priya, marcus, elena) |
 
 `npm run db:seed` wipes the database. It refuses to run when `NODE_ENV=production`.
 
@@ -64,14 +64,14 @@ Set `BACKUP_DIR` (and optionally `BACKUP_KEEP`, default 14) and the worker write
 ## Tests
 
 ```bash
-npm test     # 30 API tests: auth, permissions, lead intake + webhooks, messaging/opt-out, booking, helpers
+npm test     # API tests: auth, permissions, lead intake + vendor webhooks, messaging/opt-out, booking, restore, helpers
 ```
 
-Tests use a separate database (`policydesk_test`, or `TEST_DATABASE_URL`) that is migrated and re-seeded on every run. No provider keys are set, so nothing is ever sent. CI runs typecheck, build and tests on every pull request.
+Tests use a separate database (`bliss_test`, or `TEST_DATABASE_URL`) that is migrated and re-seeded on every run. No provider keys are set, so nothing is ever sent. CI runs typecheck, build and tests on every pull request.
 
 ## Deploying
 
-One Docker image serves the API, worker and React app on port 4000. See [DEPLOY.md](DEPLOY.md) for hosting options, environment variables, first-admin setup and backups, and [INTEGRATIONS.md](INTEGRATIONS.md) to connect the client's accounts.
+One Node.js process serves the API, worker and React app. See [DEPLOY.md](DEPLOY.md) for cPanel and Docker hosting, environment variables, first-admin setup and backups, [INTEGRATIONS.md](INTEGRATIONS.md) to connect provider accounts, and [HANDOVER.md](HANDOVER.md) for the live installation.
 
 ## Database changes
 
@@ -88,6 +88,7 @@ npm run db:migrate
 | --- | --- | --- |
 | 1 · Frontend | All screens, including the automation builder and campaigns | Done |
 | 2 · Backend | Automation engine, worker, campaigns, tasks, live updates, lead import, booking pages, team emails, password reset, login rate limit, daily backups | Done |
-| 3 · Integrations & testing | Twilio calling/recording/SMS, SendGrid, OpenAI, Firebase push, Facebook/Google/vendor lead webhooks; automated tests, CI, Docker image, deploy guide | Built. Live testing once the client's accounts are connected |
+| 3 · Integrations & testing | Twilio calling/recording/SMS, SendGrid, OpenAI, Firebase push, Facebook/Google/vendor lead webhooks; automated tests, CI, deploy guide | Done. Live on bliss-erp.com; provider accounts are connected in Admin → Integrations |
+| 4 · Data migration | AgencyZoom leads, history and staff; move to MySQL on the agency's own hosting | Done |
 
-Hosting is not decided yet. Nothing in the code is tied to a provider: the Docker image runs on any host, and file storage goes through a local-disk driver that can be swapped for S3-compatible storage later.
+Nothing in the code is tied to one host: it runs on cPanel (Passenger), any VPS with Docker, or other Node.js hosting, and file storage goes through a local-disk driver that can be swapped for S3-compatible storage later.

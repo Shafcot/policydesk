@@ -3,10 +3,10 @@
 // sends them to /api/leads/import with the admin's own Bliss sign-in, so no Bliss credential ever leaves Bliss.
 // Nothing is accepted until the admin clicks "Allow" for that exact website.
 (function () {
-  var TOKEN_KEY = 'policydesk.token';
+  var TOKEN_KEY = 'bliss-erp.token', OLD_TOKEN_KEY = 'policydesk.token';
   var allowed = null, pending = null, totals = { batches: 0, imported: 0, duplicates: 0, skipped: 0, failed: 0 };
   var $ = function (id) { return document.getElementById(id); };
-  var token = function () { try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; } };
+  var token = function () { try { return localStorage.getItem(TOKEN_KEY) || localStorage.getItem(OLD_TOKEN_KEY); } catch (e) { return null; } };
   function render() {
     $('who').textContent = token() ? 'Signed in to Bliss.' : 'Not signed in. Sign in to Bliss in another tab, then reload this page.';
     $('ask').hidden = !(pending && !allowed);

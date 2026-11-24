@@ -1,6 +1,6 @@
-# Deploying Bliss
+# Deploying Bliss ERP
 
-Bliss is one Node.js app: the API, the background worker and the built web app run in a single process on one port. It needs:
+Bliss ERP is one Node.js app: the API, the background worker and the built web app run in a single process on one port. It needs:
 
 | Requirement | Notes |
 |---|---|
@@ -22,8 +22,8 @@ Optional: `SETUP_ADMIN_EMAIL` / `SETUP_ADMIN_PASSWORD` create the first Super Ad
 
 ## cPanel (Application Manager)
 
-1. Upload the release zip with **File Manager** into a folder outside `public_html` (e.g. `~/bliss`) and extract it.
-2. **Deploy a Node.js App**: application path = that folder, startup file = `server.js`, domain = the site, Node.js 22, environment = production. Add the variables above.
+1. Upload the release zip with **File Manager** into a folder outside `public_html` (e.g. `~/bliss-erp`) and extract it.
+2. **Deploy a Node.js App**: application path = that folder, startup file = `app.js` (it simply loads `server.js`; use `server.js` directly on hosts that let you choose), domain = the site, Node.js 22, environment = production. Add the variables above.
 3. Install dependencies (the app manager's *Install dependencies* / `npm ci --omit=dev`), then start the app.
 4. On first start the app creates its tables automatically (migrations run on start).
 5. Open the site. With no agency yet, it shows the first-time setup (or uses `SETUP_ADMIN_*`).

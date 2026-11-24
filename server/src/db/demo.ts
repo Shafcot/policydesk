@@ -1,7 +1,7 @@
 /**
  * Demo data for local development and client demos. seedDemo() wipes and recreates everything.
  * Run with `npm run db:seed`, or on a test server by starting with DEMO_DATA=true (only fills an empty database).
- * Sign-in: admin@policydesk.test / agent maya@policydesk.test — password from SEED_PASSWORD (default "Policydesk123!").
+ * Sign-in: admin@bliss-erp.test / agent maya@bliss-erp.test — password from SEED_PASSWORD (default "BlissErp123!").
  */
 import { sql } from 'drizzle-orm';
 import { db, pool } from './client.js';
@@ -52,20 +52,20 @@ export async function seedDemo() {
       conn.release();
     }
   }
-  const pw = await hashPassword(process.env.SEED_PASSWORD ?? 'Policydesk123!');
+  const pw = await hashPassword(process.env.SEED_PASSWORD ?? 'BlissErp123!');
 
   const [agency] = await insertReturning(db, agencies, {
     name: 'Demo Insurance Agency', brandName: 'Bliss',
     settings: { ...DEFAULT_SETTINGS, teamTarget: 240000, reviewLinks: { google: 'https://g.page/r/demo/review', facebook: 'https://facebook.com/demo/reviews', yelp: 'https://yelp.com/biz/demo' } },
   });
 
-  const [admin] = await insertReturning(db, users, { agencyId: agency.id, name: 'Alex Morgan', email: 'admin@policydesk.test', role: 'admin', status: 'available', passwordHash: pw, bookingSlug: 'alex' });
+  const [admin] = await insertReturning(db, users, { agencyId: agency.id, name: 'Alex Morgan', email: 'admin@bliss-erp.test', role: 'admin', status: 'available', passwordHash: pw, bookingSlug: 'alex' });
   const agentDefs = [
-    { name: 'Maya Torres', email: 'maya@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Home', 'Renters', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 42000, maxCallsPerDay: 120 },
-    { name: 'Daniel Brooks', email: 'daniel@policydesk.test', hoursStart: '08:30', hoursEnd: '17:30', daysOff: ['Sat', 'Sun'], lines: ['Commercial Auto', 'General Liability', 'Workers Comp', 'BOP'], status: 'available' as const, monthlyTarget: 65000, maxCallsPerDay: 100 },
-    { name: 'Priya Shah', email: 'priya@policydesk.test', hoursStart: '09:00', hoursEnd: '18:00', daysOff: ['Sun', 'Mon'], lines: ['Auto', 'Home', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 40000, maxCallsPerDay: 120 },
-    { name: 'Marcus Lee', email: 'marcus@policydesk.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Commercial Auto', 'BOP', 'General Liability'], status: 'available' as const, monthlyTarget: 48000, maxCallsPerDay: 110 },
-    { name: 'Elena Ruiz', email: 'elena@policydesk.test', hoursStart: '10:00', hoursEnd: '19:00', daysOff: ['Fri', 'Sat'], lines: ['Home', 'Renters', 'Auto'], status: 'offline' as const, monthlyTarget: 30000, maxCallsPerDay: 90 },
+    { name: 'Maya Torres', email: 'maya@bliss-erp.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Home', 'Renters', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 42000, maxCallsPerDay: 120 },
+    { name: 'Daniel Brooks', email: 'daniel@bliss-erp.test', hoursStart: '08:30', hoursEnd: '17:30', daysOff: ['Sat', 'Sun'], lines: ['Commercial Auto', 'General Liability', 'Workers Comp', 'BOP'], status: 'available' as const, monthlyTarget: 65000, maxCallsPerDay: 100 },
+    { name: 'Priya Shah', email: 'priya@bliss-erp.test', hoursStart: '09:00', hoursEnd: '18:00', daysOff: ['Sun', 'Mon'], lines: ['Auto', 'Home', 'Life', 'Umbrella'], status: 'available' as const, monthlyTarget: 40000, maxCallsPerDay: 120 },
+    { name: 'Marcus Lee', email: 'marcus@bliss-erp.test', hoursStart: '08:00', hoursEnd: '17:00', daysOff: ['Sat', 'Sun'], lines: ['Auto', 'Commercial Auto', 'BOP', 'General Liability'], status: 'available' as const, monthlyTarget: 48000, maxCallsPerDay: 110 },
+    { name: 'Elena Ruiz', email: 'elena@bliss-erp.test', hoursStart: '10:00', hoursEnd: '19:00', daysOff: ['Fri', 'Sat'], lines: ['Home', 'Renters', 'Auto'], status: 'offline' as const, monthlyTarget: 30000, maxCallsPerDay: 90 },
   ];
   const agents = await insertReturning(db, users, agentDefs.map((a) => ({ ...a, agencyId: agency.id, role: 'agent' as const, passwordHash: pw, minCallsPerDay: 50, bookingSlug: a.name.split(' ')[0].toLowerCase() })));
   const maya = agents[0];
@@ -174,6 +174,6 @@ export async function seedDemo() {
 
   const counts = await rowsOf(db, sql`select (select count(*) from leads) leads, (select count(*) from calls) calls, (select count(*) from customers) customers, (select count(*) from sales) sales`);
   console.log('Seeded', counts[0]);
-  console.log(`Admin: ${admin.email} · Agent: ${maya.email} · password: ${process.env.SEED_PASSWORD ? '(SEED_PASSWORD)' : 'Policydesk123!'}`);
+  console.log(`Admin: ${admin.email} · Agent: ${maya.email} · password: ${process.env.SEED_PASSWORD ? '(SEED_PASSWORD)' : 'BlissErp123!'}`);
 }
 
