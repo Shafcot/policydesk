@@ -41,3 +41,19 @@ describe('auth', () => {
     expect(a.body).toEqual(b.body);
   });
 });
+
+describe('data transfer export', () => {
+  it('lists tables with counts and pages rows for the Super Admin only', async () => {
+    const admin = await as(ADMIN);
+    const t = await admin.get('/api/admin/transfer/tables');
+    expect(t.status).toBe(200);
+    const leadsT = t.body.find((x: { name: string }) => x.name === 'leads');
+    expect(leadsT.rows).toBeGreaterThan(0);
+    expect(t.body.map((x: { name: string }) => x.name).slice(0, 4)).toEqual(['agencies', 'users', 'lead_sources', 'leads']);
+    const p = await admin.get('/api/admin/transfer/leads?page=0');
+    expect(p.body.rows.length).toBe(Math.min(1000, leadsT.rows));
+    expect(p.body.rows[0]).toHaveProperty('firstName');
+    expect((await admin.get('/api/admin/transfer/integration_settings')).status).toBe(400);
+    expect((await (await as(MAYA)).get('/api/admin/transfer/tables')).status).toBe(403);
+  });
+});
