@@ -1,9 +1,16 @@
-// One call manager for the whole app: the Twilio browser phone, the call in progress, incoming calls,
+// One call manager for the whole app: the browser phone, the call in progress, incoming calls,
 // transfers, admin listen-in, and the power-dialer queue. It lives above the pages, so a call keeps going
 // (and the call bar stays on screen) when the agent moves to another page.
+//
+// The browser phone is Twilio by default. When the agent's own number is a RingCentral number and they have
+// connected their RingCentral line, it is the RingCentral WebPhone instead (calls go straight from the browser
+// to RingCentral; the CRM logs them and later attaches the recording from the RingCentral call history).
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Call, Device } from '@twilio/voice-sdk';
+import type WebPhone from 'ringcentral-web-phone';
+import type CallSession from 'ringcentral-web-phone/call-session/index';
+import type InboundCallSession from 'ringcentral-web-phone/call-session/inbound';
 import { api, ApiError } from './api';
 import { useAuth } from './auth';
 import { BAD, fullName, type BadReason, type CallResult, type Lead, type Stage } from './domain';
@@ -36,6 +43,10 @@ export type QueueItem = { bucket: 'new' | 'callback' | 'followup' | 'retry'; lea
 
 type Ctx = {
   voiceReady: boolean;
+  /** Which browser phone is running: Twilio, RingCentral, or none (calls are dialled by hand). */
+  phone: 'twilio' | 'ringcentral' | null;
+  /** Starts the browser phone again (after connecting or disconnecting RingCentral). */
+  reloadPhone: () => void;
   active: ActiveCall | null;
   muted: boolean;
   note: string; setNote: (v: string) => void;
@@ -70,6 +81,18 @@ const C = createContext<Ctx | null>(null);
 export const useCalls = () => { const c = useContext(C); if (!c) throw new Error('useCalls outside CallProvider'); return c; };
 
 const err = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong');
+/** RingCentral dials and shows numbers as digits without '+' (e.g. 15125550100). */
+const rcDigits = (n: string) => n.replace(/[^0-9]/g, '');
+const asE164 = (n: string) => { const d = rcDigits(n); return d.length === 10 ? `+1${d}` : d ? `+${d}` : n; };
+type RcStatus = { enabled: boolean; connected: boolean; useRingCentral: boolean; line: { number: string; provider: 'twilio' | 'ringcentral' } | null };
+/** A stable id per browser, so the same computer re-registers as the same RingCentral device (RingCentral allows 5). */
+function rcInstanceId() {
+  try {
+    let id = localStorage.getItem('bliss-erp.rc-device');
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem('bliss-erp.rc-device', id); }
+    return id;
+  } catch { return undefined; }
+}
 
 export function CallProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
@@ -80,6 +103,14 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const monitorRef = useRef<Call | null>(null);
   const incomingCall = useRef<Call | null>(null);
   const incomingInfo = useRef(new Map<string, IncomingInfo>());
+  const rcPhone = useRef<WebPhone | null>(null);
+  const rcCall = useRef<CallSession | null>(null);
+  const rcIncoming = useRef<InboundCallSession | null>(null);
+  const rcFrom = useRef<string | undefined>(undefined);
+  const rcWarm = useRef<{ complete: () => Promise<void>; cancel: () => Promise<void> } | null>(null);
+  const [phone, setPhone] = useState<'twilio' | 'ringcentral' | null>(null);
+  const [phoneGen, setPhoneGen] = useState(0);
+  const reloadPhone = useCallback(() => setPhoneGen((g) => g + 1), []);
   const [voiceReady, setVoiceReady] = useState(false);
   const [active, setActiveState] = useState<ActiveCall | null>(null);
   const activeRef = useRef<ActiveCall | null>(null);
@@ -104,10 +135,26 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (u) setUser(u);
   }, [user, setUser]);
 
-  /* ---- Twilio Device ---- */
+  /* ---- browser phone: RingCentral WebPhone when the agent's line is RingCentral, else Twilio Device ---- */
   useEffect(() => {
     let cancelled = false;
+    setVoiceReady(false); setPhone(null);
     (async () => {
+      const rc = await api<RcStatus>('/ringcentral/status').catch(() => null);
+      if (rc?.useRingCentral && rc.line) {
+        const { sipInfo } = await api<{ sipInfo: ConstructorParameters<typeof WebPhone>[0]['sipInfo'] }>('/ringcentral/sip', { method: 'POST' });
+        const { default: WebPhoneClass } = await import('ringcentral-web-phone');
+        if (cancelled) return;
+        const wp = new WebPhoneClass({ sipInfo, instanceId: rcInstanceId() });
+        wp.on('inboundCall', (s: InboundCallSession) => { void onRcIncoming(s); });
+        // Registration can hang when RingCentral can't be reached (firewall, VPN): give up after 20 seconds.
+        await Promise.race([wp.start(), new Promise((_, rej) => setTimeout(() => rej(new Error('RingCentral didn’t answer. Check your internet connection, then reload the page.')), 20_000))])
+          .catch((e) => { void wp.dispose().catch(() => undefined); throw e; }); // don't wait: disposing a dead connection can hang
+        if (cancelled) { void wp.dispose().catch(() => undefined); return; }
+        rcPhone.current = wp; rcFrom.current = rcDigits(rc.line.number);
+        setPhone('ringcentral'); setVoiceReady(true);
+        return;
+      }
       const st = await api<{ voice: boolean }>('/integrations/status').catch(() => ({ voice: false }));
       if (!st.voice || cancelled) return;
       const { token } = await api<{ token: string }>('/voice/token');
@@ -125,10 +172,22 @@ export function CallProvider({ children }: { children: ReactNode }) {
       });
       await d.register();
       if (cancelled) { d.destroy(); return; }
-      device.current = d; setVoiceReady(true);
-    })().catch((e) => console.warn('Calling unavailable:', e));
-    return () => { cancelled = true; device.current?.destroy(); device.current = null; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      device.current = d; setPhone('twilio'); setVoiceReady(true);
+    })().catch((e) => { console.warn('Calling unavailable:', e); if (!cancelled) toast(`Browser calling isn’t available: ${e instanceof Error ? e.message : 'the phone service couldn’t be reached. Check your internet connection, then reload the page.'}`, 'alert'); });
+    return () => {
+      cancelled = true;
+      device.current?.destroy(); device.current = null;
+      const wp = rcPhone.current; rcPhone.current = null;
+      if (wp) void wp.dispose().catch(() => undefined);
+    };
+  }, [phoneGen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // RingCentral calls aren't protected by the Twilio SDK's close prompt: ask before leaving mid-call.
+  useEffect(() => {
+    const guard = (e: BeforeUnloadEvent) => { if (rcCall.current && activeRef.current && activeRef.current.state !== 'ended') { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, []);
 
   const ended = useCallback(() => {
     setActive((a) => (a && a.state !== 'ended' ? { ...a, state: 'ended', endedAt: Date.now() } : a));
@@ -140,6 +199,31 @@ export function CallProvider({ children }: { children: ReactNode }) {
     call.on('cancel', () => { if (callRef.current === call) ended(); });
     call.on('error', (e: { message?: string }) => { if (callRef.current === call) { ended(); toast(`Call error: ${e.message ?? 'unknown'}`, 'alert'); } });
   }, [ended, toast]);
+
+  /** Follows a RingCentral call: connected when answered (and recorded), ended when it's over. */
+  const trackRc = useCallback((s: CallSession) => {
+    rcCall.current = s;
+    s.on('answered', () => {
+      if (rcCall.current !== s) return;
+      setActive((a) => (a && a.state === 'ringing' ? { ...a, state: 'connected', startedAt: Date.now() } : a));
+      s.startRecording().catch(() => undefined); // follows the RingCentral account's recording permissions
+    });
+    s.on('disposed', () => { if (rcCall.current === s) ended(); });
+    s.on('failed', (reason: string) => { if (rcCall.current === s) { ended(); toast(`Call failed${reason ? `: ${reason}` : ''}`, 'alert'); } });
+  }, [ended, setActive, toast]);
+
+  /** A call to the agent's RingCentral number while Bliss ERP is open. */
+  const onRcIncoming = useCallback(async (s: InboundCallSession) => {
+    if (activeRef.current && activeRef.current.state !== 'ended') return; // already on a call: let RingCentral's own rules handle it
+    rcIncoming.current = s;
+    const number = asE164(s.remoteNumber);
+    setIncoming({ from: number, info: null });
+    s.on('disposed', () => { if (rcIncoming.current === s) { rcIncoming.current = null; setIncoming(null); } });
+    const r = await api<{ lead: Lead | null; blocked?: string }>(`/dialpad/lookup?phone=${encodeURIComponent(number)}`).catch(() => null);
+    if (rcIncoming.current !== s) return;
+    const info: IncomingInfo = { id: '', callSid: null, number, leadId: r?.lead?.id ?? null, leadName: r?.lead ? fullName(r.lead) : null, label: 'RingCentral line', transferFrom: null };
+    setIncoming((x) => (x ? { ...x, info } : x));
+  }, []);
 
   /* ---- server events ---- */
   useLiveEvent<{ id: string; state?: 'ringing' | 'connected' | 'ended'; agentCallSid?: string | null; transfer?: Transfer; endReason?: string | null; handedOff?: boolean; transferEnded?: boolean; transferFailed?: string }>('call:state', (p) => {
@@ -168,6 +252,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
   /* ---- placing calls ---- */
   const startLive = useCallback(async (base: Omit<ActiveCall, 'live' | 'state' | 'liveCallId' | 'startedAt' | 'endedAt' | 'transfer'>, params: Record<string, string>) => {
     setMuted(false);
+    if (rcPhone.current) {
+      setActive({ ...base, live: true, state: 'ringing', liveCallId: null, startedAt: null, endedAt: null, transfer: null });
+      void setStatus('oncall');
+      try { trackRc(await rcPhone.current.call(rcDigits(base.number), rcFrom.current)); }
+      catch (e) { ended(); toast(err(e), 'alert'); }
+      return;
+    }
     if (!device.current) {
       setActive({ ...base, live: false, state: 'manual', liveCallId: null, startedAt: Date.now(), endedAt: null, transfer: null });
       void setStatus('oncall');
@@ -176,7 +267,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setActive({ ...base, live: true, state: 'ringing', liveCallId: null, startedAt: null, endedAt: null, transfer: null });
     try { track(await device.current.connect({ params })); }
     catch (e) { ended(); toast(err(e), 'alert'); }
-  }, [setActive, setStatus, track, ended, toast]);
+  }, [setActive, setStatus, track, trackRc, ended, toast]);
 
   const callLead = useCallback(async (l: Lead) => {
     if (activeRef.current && activeRef.current.state !== 'ended') { toast('Finish the current call first', 'alert'); return; }
@@ -213,6 +304,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
   }, [callLead, dialTyped, setActive]);
 
   const answer = useCallback(async () => {
+    const rs = rcIncoming.current;
+    if (rs) {
+      const info = incoming?.info ?? null;
+      rcIncoming.current = null; setIncoming(null);
+      try { await rs.answer(); } catch (e) { toast(err(e), 'alert'); return; }
+      trackRc(rs);
+      setMuted(false); setNote('');
+      void setStatus('oncall');
+      const lead = info?.leadId ? await api<Lead>(`/leads/${info.leadId}`).catch(() => null) : null;
+      setActive({ lead, number: info?.number ?? asE164(rs.remoteNumber), direction: 'in', live: true, state: 'connected', liveCallId: null, startedAt: Date.now(), endedAt: null, transfer: null, label: 'RingCentral line', transferFrom: null });
+      rs.startRecording().catch(() => undefined);
+      return;
+    }
     const call = incomingCall.current;
     if (!call) return;
     const sid = call.parameters.CallSid;
@@ -223,19 +327,27 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setMuted(false); setNote('');
     const lead = info?.leadId ? await api<Lead>(`/leads/${info.leadId}`).catch(() => null) : null;
     setActive({ lead, number: info?.number ?? call.parameters.From ?? '', direction: 'in', live: true, state: 'connected', liveCallId: info?.id ?? null, startedAt: Date.now(), endedAt: null, transfer: null, label: info?.label ?? null, transferFrom: info?.transferFrom ?? null });
-  }, [incoming, track, setActive]);
+  }, [incoming, track, trackRc, setActive, setStatus, toast]);
 
-  const decline = useCallback(() => { incomingCall.current?.reject(); incomingCall.current = null; setIncoming(null); }, []);
+  const decline = useCallback(() => {
+    if (rcIncoming.current) { void rcIncoming.current.decline().catch(() => undefined); rcIncoming.current = null; setIncoming(null); return; }
+    incomingCall.current?.reject(); incomingCall.current = null; setIncoming(null);
+  }, []);
 
-  const hangUp = useCallback(() => { callRef.current?.disconnect(); ended(); }, [ended]);
+  const hangUp = useCallback(() => { callRef.current?.disconnect(); void rcCall.current?.hangup().catch(() => undefined); ended(); }, [ended]);
   const endManual = useCallback(() => ended(), [ended]);
-  const toggleMute = useCallback(() => { callRef.current?.mute(!muted); setMuted(!muted); }, [muted]);
-  const sendDigits = useCallback((d: string) => { callRef.current?.sendDigits(d); }, []);
+  const toggleMute = useCallback(() => {
+    callRef.current?.mute(!muted);
+    if (rcCall.current) { if (muted) rcCall.current.unmute(); else rcCall.current.mute(); }
+    setMuted(!muted);
+  }, [muted]);
+  const sendDigits = useCallback((d: string) => { callRef.current?.sendDigits(d); rcCall.current?.sendDtmf(d); }, []);
 
   const reset = useCallback(() => {
-    const wasManual = activeRef.current && !activeRef.current.live;
-    setActive(null); callRef.current = null; setMuted(false); setNote('');
-    if (wasManual) void setStatus('available');
+    // Manual and RingCentral calls set "on a call" from the browser, so the browser sets it back too.
+    const wasLocal = activeRef.current && (!activeRef.current.live || !!rcCall.current);
+    setActive(null); callRef.current = null; rcCall.current = null; rcWarm.current = null; setMuted(false); setNote('');
+    if (wasLocal) void setStatus('available');
   }, [setActive, setStatus]);
 
   const elapsed = useCallback(() => {
@@ -246,12 +358,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const logResult = useCallback(async (result: CallResult, bad?: BadReason) => {
     const a = activeRef.current;
     if (!a?.lead) return;
-    if (a.state !== 'ended' && !a.handedOff) { callRef.current?.disconnect(); }
+    if (a.state !== 'ended' && !a.handedOff) { callRef.current?.disconnect(); void rcCall.current?.hangup().catch(() => undefined); }
     const callSid = callRef.current?.parameters?.CallSid;
+    const rcSessionId = rcCall.current?.sessionId;
     try {
       const l = await api<Lead & { stage: Stage }>(`/leads/${a.lead.id}/calls`, { method: 'POST', json: {
         result, durationSec: Math.round(elapsed()), notes: note.trim() || undefined,
-        ...(a.liveCallId ? { liveCallId: a.liveCallId } : callSid ? { callSid } : {}),
+        ...(a.liveCallId ? { liveCallId: a.liveCallId } : callSid ? { callSid } : rcSessionId ? { rcSessionId } : {}),
       } });
       if (bad) await api(`/leads/${a.lead.id}`, { method: 'PATCH', json: { badReason: bad } });
       ['queue', 'dashboard', 'leads', 'lead'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
@@ -266,7 +379,34 @@ export function CallProvider({ children }: { children: ReactNode }) {
   /* ---- transfers ---- */
   const transfer = useCallback(async (mode: 'warm' | 'blind', target: { userId?: string; number?: string }) => {
     const a = activeRef.current;
-    if (!a?.liveCallId) { toast('Transfers need browser calling (Twilio)', 'alert'); return; }
+    const s = rcCall.current;
+    if (s && a) {
+      // RingCentral: transfer to a phone number, or to a teammate's own number.
+      let to = target.number ?? null, label = target.number ?? '';
+      if (target.userId) {
+        const team = await api<{ id: string; name: string; twilioNumber?: string | null }[]>('/users').catch(() => []);
+        const u = team.find((x) => x.id === target.userId);
+        to = u?.twilioNumber ?? null; label = u?.name ?? '';
+        if (!to) { toast(`${label || 'That person'} has no phone number to transfer to`, 'alert'); return; }
+      }
+      if (!to) return;
+      try {
+        if (mode === 'blind') {
+          await s.transfer(rcDigits(to));
+          setActive((x) => (x ? { ...x, state: 'ended', endedAt: Date.now(), handedOff: true, transfer: null } : x));
+          toast('Call transferred');
+        } else {
+          const w = await s.warmTransfer(rcDigits(to), { callerId: rcFrom.current });
+          rcWarm.current = { complete: w.complete, cancel: w.cancel };
+          setActive((x) => (x ? { ...x, transfer: { mode: 'warm', label, state: 'ringing' } } : x));
+          w.newSession.once('answered', () => setActive((x) => (x?.transfer ? { ...x, transfer: { ...x.transfer, state: 'joined' } } : x)));
+          w.newSession.once('disposed', () => { if (rcWarm.current) setActive((x) => (x?.transfer && x.transfer.state !== 'handoff' ? { ...x, transfer: null } : x)); });
+          toast('Calling them… the customer is on hold');
+        }
+      } catch (e) { toast(err(e), 'alert'); }
+      return;
+    }
+    if (!a?.liveCallId) { toast('Transfers need browser calling', 'alert'); return; }
     try {
       const r = await api<{ transfer: Transfer }>(`/calls/live/${a.liveCallId}/transfer`, { method: 'POST', json: { mode, ...target } });
       setActive((x) => (x ? { ...x, transfer: r.transfer } : x));
@@ -274,10 +414,22 @@ export function CallProvider({ children }: { children: ReactNode }) {
     } catch (e) { toast(err(e), 'alert'); }
   }, [setActive, toast]);
   const completeTransfer = useCallback(async () => {
+    if (rcWarm.current) {
+      const w = rcWarm.current; rcWarm.current = null;
+      try { await w.complete(); setActive((x) => (x ? { ...x, state: 'ended', endedAt: Date.now(), handedOff: true, transfer: null } : x)); toast('Call transferred'); }
+      catch (e) { toast(err(e), 'alert'); }
+      return;
+    }
     const a = activeRef.current; if (!a?.liveCallId) return;
     try { await api(`/calls/live/${a.liveCallId}/transfer/complete`, { method: 'POST' }); } catch (e) { toast(err(e), 'alert'); }
   }, [toast]);
   const cancelTransfer = useCallback(async () => {
+    if (rcWarm.current) {
+      const w = rcWarm.current; rcWarm.current = null;
+      try { await w.cancel(); } catch (e) { toast(err(e), 'alert'); }
+      setActive((x) => (x ? { ...x, transfer: null } : x));
+      return;
+    }
     const a = activeRef.current; if (!a?.liveCallId) return;
     try { await api(`/calls/live/${a.liveCallId}/transfer/cancel`, { method: 'POST' }); setActive((x) => (x ? { ...x, transfer: null } : x)); } catch (e) { toast(err(e), 'alert'); }
   }, [setActive, toast]);
@@ -285,7 +437,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   /* ---- admin listen-in ---- */
   const stopListening = useCallback(() => { monitorRef.current?.disconnect(); monitorRef.current = null; setMonitor(null); }, []);
   const listen = useCallback(async (liveCallId: string, mode: 'listen' | 'whisper', label: string) => {
-    if (!device.current) { toast('Listening in needs browser calling (Twilio)', 'alert'); return; }
+    if (!device.current) { toast('Listening in works on Twilio calls only', 'alert'); return; }
     if (activeRef.current && activeRef.current.state !== 'ended') { toast('Finish your own call first', 'alert'); return; }
     monitorRef.current?.disconnect();
     setMonitor({ liveCallId, mode, label, connected: false });
@@ -307,7 +459,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   }, [auto, active, busy, queueQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const value: Ctx = {
-    voiceReady, active, muted, note, setNote, auto, setAuto, queue, incoming, monitor, won, clearWon: () => setWon(null), busy, elapsed,
+    voiceReady, phone, reloadPhone, active, muted, note, setNote, auto, setAuto, queue, incoming, monitor, won, clearWon: () => setWon(null), busy, elapsed,
     callLead, callNumber, redial, answer, decline, hangUp, toggleMute, sendDigits, logResult, attachLead, dismiss, endManual,
     transfer, completeTransfer, cancelTransfer, listen, stopListening,
   };

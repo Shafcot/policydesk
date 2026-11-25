@@ -20,7 +20,7 @@ const BUCKETS = [['new', 'New leads'], ['callback', 'Requested call-backs'], ['f
 const LABEL = { new: 'New lead', callback: 'Call-back', followup: 'Follow-up', retry: 'Retry' };
 
 /**
- * Power dialer. Calls go through the browser when Twilio is connected; otherwise the agent dials on their own phone
+ * Power dialer. Calls go through the browser when Twilio (or the agent's RingCentral line) is connected; otherwise the agent dials on their own phone
  * and the app times the call. The call itself lives in the app-wide call manager (see lib/calls.tsx).
  */
 export function Dialer() {
@@ -94,7 +94,7 @@ export function Dialer() {
                   <div className="row">{a.state === 'connected' && a.live && <span className="rec">RECORDING</span>}<span className="call-timer">{dur(c.elapsed())}</span></div>
                 </div>
                 <CallControls compact />
-                {a.state === 'manual' && <p className="help">Browser calling turns on when Twilio is connected. Until then, dial from your phone and log the result here.</p>}
+                {a.state === 'manual' && <p className="help">Browser calling turns on when Twilio is connected, or when your number is on RingCentral and you connect your RingCentral line (account menu). Until then, dial from your phone and log the result here.</p>}
                 {lead ? <>
                   <ScriptPanel lead={lead} first={lead.attempts === 0} scripts={st?.callScripts} />
                   <div className="kv">

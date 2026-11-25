@@ -1,5 +1,6 @@
-// Super Admin: the agency's phone numbers. Add numbers you already have, import them from Twilio or buy new ones,
-// and assign one to each user (their caller ID; calls to it ring them in the browser).
+// Super Admin: the agency's phone numbers. Add numbers you already have, import them from Twilio or RingCentral,
+// or buy new ones, and assign one to each user (their caller ID; calls to it ring them in the browser).
+// A number is carried by Twilio or by RingCentral; the user's browser phone follows whichever carries their number.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
@@ -8,6 +9,7 @@ import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
 import { Empty, Loading, Modal, PageHead, Pill } from '../components/ui';
 import { BuySearch, prettyNumber, useNumbers, type PhoneNumber } from '../components/NumberPicker';
+import { useRingCentralStatus } from '../components/RingCentralLink';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong');
 
@@ -20,14 +22,17 @@ export function Numbers() {
   const [removing, setRemoving] = useState<PhoneNumber | null>(null);
   const refresh = () => { qc.invalidateQueries({ queryKey: ['numbers'] }); qc.invalidateQueries({ queryKey: ['users'] }); };
   const patch = useMutation({ mutationFn: (b: { id: string; userId?: string | null; label?: string | null }) => api(`/admin/numbers/${b.id}`, { method: 'PATCH', json: { userId: b.userId, label: b.label } }), onSuccess: (_r, b) => { refresh(); toast(b.userId === undefined ? 'Label saved' : b.userId ? 'Number assigned' : 'Number unassigned'); }, onError: (e) => toast(err(e), 'alert') });
+  const rc = useRingCentralStatus();
+  const syncRc = useMutation({ mutationFn: () => api<{ added: number; total: number; failed: number }>('/admin/numbers/sync-ringcentral', { method: 'POST' }), onSuccess: (r) => { refresh(); toast(r.added ? `Added ${r.added} RingCentral number${r.added === 1 ? '' : 's'}` : `All ${r.total} RingCentral numbers are already listed${r.failed ? ` (${r.failed} sign-in${r.failed === 1 ? '' : 's'} need reconnecting)` : ''}`); }, onError: (e) => toast(err(e), 'alert') });
   const sync = useMutation({ mutationFn: () => api<{ added: number; total: number }>('/admin/numbers/sync', { method: 'POST' }), onSuccess: (r) => { refresh(); toast(r.added ? `Added ${r.added} number${r.added === 1 ? '' : 's'} from Twilio` : `All ${r.total} Twilio numbers are already listed`); }, onError: (e) => toast(err(e), 'alert') });
   if (!nums.data || !team.data) return <Loading />;
   const { numbers, twilio, defaultCallerId } = nums.data;
   const active = team.data.filter((u) => u.active !== false);
   return (
     <>
-      <PageHead title="Phone numbers" sub="Each user calls from their own number, and calls to that number ring them in the browser. A user has one number at a time."
+      <PageHead title="Phone numbers" sub="Each user calls from their own number, and calls to that number ring them in the browser. A user has one number at a time. Numbers can be on Twilio or RingCentral."
         actions={<>
+          {rc.data?.enabled && <button className="btn" disabled={syncRc.isPending} onClick={() => syncRc.mutate()}><Icon name="download" className="sm" />{syncRc.isPending ? 'Importing…' : 'Import from RingCentral'}</button>}
           {twilio && <button className="btn" disabled={sync.isPending} onClick={() => sync.mutate()}><Icon name="download" className="sm" />{sync.isPending ? 'Importing…' : 'Import from Twilio'}</button>}
           <button className="btn" onClick={() => setModal('add')}><Icon name="plus" className="sm" />Add a number</button>
           <button className="btn primary" onClick={() => setModal('buy')}><Icon name="phone" className="sm" />Buy a number</button>
@@ -35,7 +40,7 @@ export function Numbers() {
       {!twilio && <p className="note-box">Twilio isn’t connected yet. You can still list numbers and assign them; buying and importing turn on once the Twilio keys are saved in <a href="/settings">Settings → Integrations</a>.</p>}
       <section className="panel">
         {!numbers.length ? <Empty>No numbers yet. Add a number the agency already has, or buy a new one.</Empty> : (
-          <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Number</th><th>Label</th><th>Assigned to</th><th>Twilio</th><th /></tr></thead><tbody>
+          <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Number</th><th>Label</th><th>Assigned to</th><th>Carrier</th><th /></tr></thead><tbody>
             {numbers.map((n) => (
               <tr key={n.id}>
                 <td className="mono"><b>{prettyNumber(n.number)}</b></td>
@@ -44,7 +49,7 @@ export function Numbers() {
                   <option value="">Not assigned</option>
                   {active.map((u) => <option key={u.id} value={u.id}>{u.name}{u.twilioNumber && u.twilioNumber !== n.number ? ` (replaces ${prettyNumber(u.twilioNumber)})` : ''}</option>)}
                 </select></td>
-                <td>{n.twilioSid ? <Pill color="--ok">In account</Pill> : <Pill color="--s9">Not in Twilio</Pill>}</td>
+                <td>{n.provider === 'ringcentral' ? <Pill color="--accent">RingCentral</Pill> : n.twilioSid ? <Pill color="--ok">Twilio</Pill> : <Pill color="--s9">Not in Twilio</Pill>}</td>
                 <td className="r"><button className="btn sm danger" onClick={() => setRemoving(n)}><Icon name="trash" className="sm" />Remove</button></td>
               </tr>
             ))}
@@ -77,7 +82,7 @@ function NumberModal({ mode, onClose }: { mode: 'add' | 'buy'; onClose: () => vo
       <div className="form-grid">
         {mode === 'add'
           ? <div className="field full"><label htmlFor="pn-num">Phone number</label><input id="pn-num" className="input mono" placeholder="(512) 555-0100 or +15125550100" value={number} onChange={(e) => setNumber(e.target.value)} autoFocus />
-            <small className="help">If it’s in the connected Twilio account, its calls and texts are pointed at the CRM automatically. Numbers from another carrier (e.g. RingCentral) need porting to Twilio first.</small></div>
+            <small className="help">If it’s in the connected Twilio account, its calls and texts are pointed at the CRM automatically. RingCentral numbers are added for you when each user connects their RingCentral line (account menu → Connect RingCentral).</small></div>
           : <div className="field full"><label>Find a number</label><BuySearch value={number} onPick={setNumber} /></div>}
         <div className="field"><label htmlFor="pn-label">Label (optional)</label><input id="pn-label" className="input" placeholder="e.g. Sales line" value={label} onChange={(e) => setLabel(e.target.value)} /></div>
         <div className="field"><label htmlFor="pn-user">Assign to</label><select id="pn-user" className="input" value={userId} onChange={(e) => setUserId(e.target.value)}><option value="">Nobody yet</option>{(team.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
@@ -99,7 +104,7 @@ function RemoveModal({ n, onClose }: { n: PhoneNumber; onClose: () => void }) {
     <Modal title={`Remove ${prettyNumber(n.number)}?`} onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary danger-fill" disabled={del.isPending} onClick={() => del.mutate()}>{release ? 'Release number' : 'Remove from list'}</button></>}>
       <p>{n.userName ? `${n.userName} will call from the default caller ID until you give them another number.` : 'It’s not assigned to anyone.'}</p>
-      {n.twilioSid && <label className="check"><input type="checkbox" checked={release} onChange={(e) => setRelease(e.target.checked)} />Also release it from Twilio (stops the monthly charge; the number can’t be recovered)</label>}
+      {n.twilioSid && n.provider !== 'ringcentral' && <label className="check"><input type="checkbox" checked={release} onChange={(e) => setRelease(e.target.checked)} />Also release it from Twilio (stops the monthly charge; the number can’t be recovered)</label>}
     </Modal>
   );
 }

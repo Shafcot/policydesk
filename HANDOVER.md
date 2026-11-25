@@ -33,7 +33,7 @@ Leads keep arriving in AgencyZoom until each vendor confirms the switch, so keep
 1. **Change the cPanel password**, since it was shared during setup.
 2. **Add Duane Kriener's user** in Bliss ERP (Settings → Users) and assign him the leads that were his in AgencyZoom.
 3. **Correct Darren Ostern's email** in Settings → Users (it reads `farmersagncy.com`).
-4. **Connect the provider accounts** in Settings → Integrations: Twilio (calls and texts), SendGrid (email), OpenAI (call transcripts and AI replies), Microsoft 365 (Outlook calendar), Firebase (push notifications), Facebook and Google lead forms. Until then, calls are dialled from agents' own phones and outgoing texts and emails wait as *queued*. See [INTEGRATIONS.md](INTEGRATIONS.md).
+4. **Connect the provider accounts** in Settings → Integrations: Twilio (calls and texts), RingCentral (for agents whose numbers are on RingCentral; each agent then uses Connect RingCentral in their account menu), SendGrid (email), OpenAI (call transcripts and AI replies), Microsoft 365 (Outlook calendar), Firebase (push notifications), Facebook and Google lead forms. Until then, calls are dialled from agents' own phones and outgoing texts and emails wait as *queued*. See [INTEGRATIONS.md](INTEGRATIONS.md).
 5. **Send the vendor emails** and, once every vendor has switched, stop using AgencyZoom.
 
 ## Backups

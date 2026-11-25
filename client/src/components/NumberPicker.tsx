@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 
-export type PhoneNumber = { id: string; number: string; label: string | null; userId: string | null; userName: string | null; twilioSid: string | null; createdAt: string };
+export type PhoneNumber = { id: string; number: string; label: string | null; userId: string | null; userName: string | null; twilioSid: string | null; provider?: 'twilio' | 'ringcentral'; createdAt: string };
 export type NumbersResp = { numbers: PhoneNumber[]; twilio: boolean; defaultCallerId: string | null };
 export const useNumbers = () => useQuery({ queryKey: ['numbers'], queryFn: () => api<NumbersResp>('/admin/numbers') });
 
