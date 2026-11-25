@@ -24,6 +24,7 @@ import { numbersRouter } from './routes/numbers.js';
 import { sleeping, touch } from './services/activity.js';
 import { callsRouter } from './routes/calls.js';
 import { restoreRouter, transferRouter } from './routes/transfer.js';
+import { ringcentralCallback, ringcentralRouter } from './routes/ringcentral.js';
 
 export function createApp() {
   const app = express();
@@ -49,6 +50,7 @@ export function createApp() {
   // Webhooks parse their own bodies (Twilio form posts, Facebook needs the raw body for its signature).
   app.use('/webhooks', webhooks);
   app.use(mediaRouter);
+  app.use(ringcentralCallback); // RingCentral sign-in redirect (public; protected by a signed state)
   app.use(express.json({ limit: '5mb' }));
 
   app.get('/api/health', async (_req, res) => {
@@ -75,6 +77,7 @@ export function createApp() {
   app.use('/api', numbersRouter);
   app.use('/api', callsRouter);
   app.use('/api', transferRouter);
+  app.use('/api', ringcentralRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'not_found' }));
 
   // Import bridge (data migrations): the old CRM's page opens this window and posts leads to it. It must keep

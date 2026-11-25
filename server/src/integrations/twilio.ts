@@ -3,6 +3,7 @@
 import type { NextFunction, Request, Response as ExpressResponse } from 'express';
 import twilio from 'twilio';
 import { cfg, enabled } from './settings.js';
+import { fetchRcRecording, isRcRecording } from './ringcentral.js';
 
 let client: { key: string; c: ReturnType<typeof twilio> } | null = null;
 /** REST client; rebuilt when the Account SID or Auth Token changes in Settings → Integrations. */
@@ -47,8 +48,9 @@ export async function sendSms(to: string, body: string) {
   return { sid: msg.sid, status: msg.status };
 }
 
-/** Downloads a recording (Twilio media URLs need account credentials). */
+/** Downloads a recording (Twilio media URLs need account credentials; RingCentral ones the agent's sign-in). */
 export async function fetchRecording(url: string): Promise<Response> {
+  if (isRcRecording(url)) return fetchRcRecording(url);
   const t = cfg.twilio();
   const mp3 = url.endsWith('.mp3') ? url : `${url}.mp3`;
   return fetch(mp3, { headers: { authorization: `Basic ${Buffer.from(`${t.accountSid}:${t.authToken}`).toString('base64')}` } });

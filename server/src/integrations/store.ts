@@ -24,6 +24,11 @@ export const GROUPS: Group[] = [
     { key: 'TWILIO_CALLER_ID', label: 'Default caller ID', placeholder: '+15125550100', hint: 'Used when a user has no number of their own.' },
     { key: 'CALL_RECORDING_NOTICE', label: 'Recording notice (optional)', placeholder: 'This call may be recorded for quality.' },
   ] },
+  { id: 'ringcentral', name: 'RingCentral: calling and texting from RingCentral numbers', about: 'For agents whose number is on RingCentral. Create an app at developers.ringcentral.com (REST API app, 3-legged OAuth with authorization code, app scopes: VoIP Calling, Read Accounts, Read Call Log, Read Call Recording, SMS, Read Messages, Webhook Subscriptions) and add the redirect address shown below. Each user then connects their own RingCentral line from their profile.', fields: [
+    { key: 'RINGCENTRAL_CLIENT_ID', label: 'Client ID' },
+    { key: 'RINGCENTRAL_CLIENT_SECRET', label: 'Client secret', secret: true },
+    { key: 'RINGCENTRAL_SERVER', label: 'Server', placeholder: 'https://platform.ringcentral.com', hint: 'Leave empty for live use. For RingCentral’s test environment use https://platform.devtest.ringcentral.com.' },
+  ] },
   { id: 'sendgrid', name: 'SendGrid: email', about: 'API key with Mail Send permission, and a sender on an authenticated domain. Inbound fields are for email replies.', fields: [
     { key: 'SENDGRID_API_KEY', label: 'API key', secret: true, placeholder: 'SG.…' },
     { key: 'SENDGRID_FROM_EMAIL', label: 'From email', placeholder: 'quotes@youragency.com' },
@@ -69,13 +74,14 @@ let version = 0;
 export const settingsVersion = () => version;
 
 const encKey = () => createHash('sha256').update(`${process.env.SETTINGS_ENCRYPTION_KEY || env.JWT_SECRET}:integration-settings`).digest();
-function encrypt(plain: string) {
+/** AES-256-GCM, keyed from the app secret. Also used for other stored secrets (e.g. RingCentral sign-ins). */
+export function encrypt(plain: string) {
   const iv = randomBytes(12);
   const c = createCipheriv('aes-256-gcm', encKey(), iv);
   const data = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
   return `v1:${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${data.toString('base64')}`;
 }
-function decrypt(stored: string): string | null {
+export function decrypt(stored: string): string | null {
   try {
     const [v, iv, tag, data] = stored.split(':');
     if (v !== 'v1') return null;

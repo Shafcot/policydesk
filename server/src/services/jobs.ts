@@ -14,6 +14,8 @@ import { deliverQueued } from '../integrations/delivery.js';
 import { sleeping } from './activity.js';
 import { rowsOf } from '../db/helpers.js';
 import { syncOutlook } from '../integrations/outlook.js';
+import { ringcentralHousekeeping } from '../integrations/ringcentral.js';
+import { attachRecording } from '../integrations/delivery.js';
 
 const LOCK_KEY = 4207061; // only one worker process does the work at a time
 
@@ -108,6 +110,7 @@ export async function tick() {
     await processDueRuns();
     await deliverQueued();
     await syncOutlook().catch((e) => console.error('Outlook sync failed', e));
+    await ringcentralHousekeeping(attachRecording).catch((e) => console.error('RingCentral housekeeping failed', e));
     // Calls whose end Twilio never reported (lost webhook): close them after 4 hours and free the agent.
     await db.execute(sql`update live_calls set status = 'ended', ended_at = now(), end_reason = coalesce(end_reason, 'stale') where status in ('ringing', 'active') and created_at < now() - interval 4 hour`);
     await db.execute(sql`update users set status = 'available' where status = 'oncall' and not exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.status in ('ringing', 'active')) and exists (select 1 from live_calls lc where lc.agent_id = users.id and lc.end_reason = 'stale' and lc.ended_at > now() - interval 5 minute)`);

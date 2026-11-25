@@ -14,6 +14,7 @@ import { getSettings, notify } from '../services/rules.js';
 import { issueReset, publicUser } from './auth.js';
 import { makeSlug } from '../lib/slug.js';
 import { insertReturning, updateReturning } from '../db/helpers.js';
+import { disconnect as rcDisconnect } from '../integrations/ringcentral.js';
 import { sendTeamEmail } from '../services/mailer.js';
 
 export const adminRouter = Router();
@@ -70,6 +71,7 @@ adminRouter.delete('/users/:id', ah<AuthedRequest>(async (req, res) => {
     if (r.length) await notify(tx, { agencyId: u.agencyId, userId: null, kind: 'warn', text: `${u.name} was removed. ${r.length} leads moved to intake for reassignment.` });
     return r.length;
   });
+  await rcDisconnect(id).catch((e) => console.warn('RingCentral disconnect failed', e)); // frees their RingCentral line
   res.json({ ok: true, leadsMovedToIntake: moved });
 }));
 
