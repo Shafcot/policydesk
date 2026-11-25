@@ -81,9 +81,11 @@ const C = createContext<Ctx | null>(null);
 export const useCalls = () => { const c = useContext(C); if (!c) throw new Error('useCalls outside CallProvider'); return c; };
 
 const err = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong');
-/** RingCentral dials and shows numbers as digits without '+' (e.g. 15125550100). */
-const rcDigits = (n: string) => n.replace(/[^0-9]/g, '');
-const asE164 = (n: string) => { const d = rcDigits(n); return d.length === 10 ? `+1${d}` : d ? `+${d}` : n; };
+const digitsOf = (n: string) => n.replace(/[^0-9]/g, '');
+/** Full international form; 10-digit numbers are US/Canada. */
+const asE164 = (n: string) => { const d = digitsOf(n); return d.length === 10 ? `+1${d}` : d ? `+${d}` : n; };
+/** RingCentral dials numbers as digits with the country code and no '+' (e.g. 15125550100). */
+const rcDigits = (n: string) => digitsOf(asE164(n));
 type RcStatus = { enabled: boolean; connected: boolean; useRingCentral: boolean; line: { number: string; provider: 'twilio' | 'ringcentral' } | null };
 /** A stable id per browser, so the same computer re-registers as the same RingCentral device (RingCentral allows 5). */
 function rcInstanceId() {

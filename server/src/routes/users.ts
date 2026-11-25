@@ -16,7 +16,7 @@ export const usersRouter = Router();
 usersRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   const list = await db.query.users.findMany({ where: and(eq(users.agencyId, req.user.agencyId), eq(users.active, true)), orderBy: asc(users.name) });
   if (req.user.role !== 'admin') {
-    return res.json(list.map((u) => ({ id: u.id, name: u.name, role: u.role, status: u.status, bookingSlug: u.bookingSlug })));
+    return res.json(list.map((u) => ({ id: u.id, name: u.name, role: u.role, status: u.status, bookingSlug: u.bookingSlug, twilioNumber: u.twilioNumber })));
   }
   const today = await callsTodayByUser(req.user.agencyId);
   res.json(list.map((u) => ({ ...publicUser(u), invited: !!u.inviteToken, callsToday: today.get(u.id) ?? 0 })));
