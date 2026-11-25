@@ -8,10 +8,11 @@ import { cfg, enabled } from './settings.js';
 import { toE164 } from './phone.js';
 import { unsubToken } from './signed.js';
 import { fetchRecording, sendSms } from './twilio.js';
+import { lineFor, sendRcSms } from './ringcentral.js';
 
 /** Sends up to `limit` queued messages whose channel has a provider. Safe to run from several workers (row locks). */
 export async function deliverQueued(limit = 50) {
-  const channels = [...(enabled.sms() ? ['sms'] : []), ...(enabled.email() ? ['email'] : [])] as ('sms' | 'email')[];
+  const channels = [...(enabled.sms() || enabled.ringcentral() ? ['sms'] : []), ...(enabled.email() ? ['email'] : [])] as ('sms' | 'email')[];
   if (!channels.length) return 0;
   const batch = await db.transaction(async (tx) => {
     const rows = await tx.select({ id: messages.id }).from(messages)
@@ -38,6 +39,15 @@ async function deliverOne(id: string) {
     if (m.channel === 'sms') {
       const to = toE164(phone);
       if (!to) return fail('No valid phone number');
+      // Texts go out from the contact's agent's own line when it's a RingCentral number; otherwise through Twilio.
+      const owner = lead?.agentId ?? cust?.agentId ?? null;
+      const line = enabled.ringcentral() ? await lineFor(owner) : null;
+      if (line?.provider === 'ringcentral' && owner) {
+        const r = await sendRcSms(owner, line.number, to, m.body);
+        await db.update(messages).set({ status: 'sent', providerId: r.id, error: null }).where(eq(messages.id, id));
+        return;
+      }
+      if (!enabled.sms()) return fail('Texting isn’t set up for this contact: their agent has no RingCentral number and Twilio texting isn’t connected');
       const r = await sendSms(to, m.body);
       await db.update(messages).set({ status: 'sent', providerId: r.sid, error: null }).where(eq(messages.id, id));
     } else {

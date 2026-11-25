@@ -1,3 +1,4 @@
+import { RingCentralLink } from './RingCentralLink';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -143,6 +144,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
               <div className="li" style={{ padding: '12px 14px' }}><div className="grow"><b>{me.name}</b><small>{me.email}</small></div></div>
               <label className="li check" style={{ padding: '10px 14px' }}><input type="checkbox" checked={me.notifyByEmail} onChange={(e) => prefs.mutate(e.target.checked)} />Email me notifications</label>
               {pushOk && <div className="li click" style={{ padding: '10px 14px' }} onClick={async () => { const r = await enablePush().catch(() => 'unavailable' as const); const msg: Record<typeof r, string> = { enabled: 'Push notifications are on for this browser', denied: 'Notifications are blocked in this browser’s settings', unavailable: 'Push notifications are not available' }; toast(msg[r], 'bell'); }}><Icon name="bell" className="sm" /><div className="grow"><b>Turn on push notifications</b></div></div>}
+              <RingCentralLink />
               <div className="li click" style={{ padding: '10px 14px' }} onClick={logout}><Icon name="left" className="sm" /><div className="grow"><b>Sign out</b></div></div>
             </Popover>
           )}

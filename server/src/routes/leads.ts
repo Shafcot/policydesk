@@ -194,7 +194,9 @@ leadsRouter.post('/bulk', requireAdmin, ah<AuthedRequest>(async (req, res) => {
 leadsRouter.post('/:id/calls', ah<AuthedRequest>(async (req, res) => {
   const lead = await getVisibleLead(req.user, String(req.params.id));
   assertCanCall(req.user, lead);
-  const body = z.object({ result: z.enum(CALL_RESULTS), durationSec: z.number().int().min(0).max(36000).optional(), notes: z.string().max(5000).optional(), callSid: z.string().regex(/^CA[0-9a-f]{32}$/).optional(), liveCallId: z.string().uuid().optional() }).parse(req.body);
+  const body = z.object({ result: z.enum(CALL_RESULTS), durationSec: z.number().int().min(0).max(36000).optional(), notes: z.string().max(5000).optional(), callSid: z.string().regex(/^CA[0-9a-f]{32}$/).optional(), liveCallId: z.string().uuid().optional(), rcSessionId: z.string().regex(/^s-[0-9a-z]{6,60}$/i).optional() }).parse(req.body);
+  // RingCentral browser calls: the recording is matched later from the RingCentral call history by this session id.
+  if (body.rcSessionId && !body.callSid && !body.liveCallId) body.callSid = `rc:${body.rcSessionId}`;
   // A browser call: the recording is filed under the call's first leg, whoever ends up logging it.
   if (body.liveCallId) {
     const lc = await db.query.liveCalls.findFirst({ where: and(eq(liveCalls.id, body.liveCallId), eq(liveCalls.agencyId, req.user.agencyId)) });

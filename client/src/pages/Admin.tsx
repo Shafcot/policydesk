@@ -311,10 +311,11 @@ function Templates() {
   );
 }
 
-type Status = { voice: boolean; sms: boolean; email: boolean; inboundEmail: boolean; ai: boolean; push: boolean; facebook: boolean; googleAds: boolean; webhooks: Record<string, string> };
+type Status = { voice: boolean; sms: boolean; email: boolean; inboundEmail: boolean; ai: boolean; push: boolean; facebook: boolean; googleAds: boolean; ringcentral: boolean; webhooks: Record<string, string> };
 const INTEGRATIONS: { key: keyof Omit<Status, 'webhooks'>; name: string; does: string; needs: string }[] = [
   { key: 'voice', name: 'Twilio Voice', does: 'Browser calling, power dialer, recordings, inbound calls', needs: 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID, PUBLIC_API_URL' },
-  { key: 'sms', name: 'Twilio SMS', does: 'Two-way texting, STOP handling, delivery status', needs: 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_SERVICE_SID (A2P 10DLC approved)' },
+  { key: 'sms', name: 'Texting', does: 'Two-way texting, STOP handling, delivery status (Twilio, or each agent’s RingCentral number)', needs: 'Twilio: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_SERVICE_SID (A2P 10DLC approved), or RingCentral below' },
+  { key: 'ringcentral', name: 'RingCentral', does: 'Browser calling, texting and recordings for agents whose number is on RingCentral', needs: 'RINGCENTRAL_CLIENT_ID, RINGCENTRAL_CLIENT_SECRET; each user connects their line from the account menu' },
   { key: 'email', name: 'SendGrid email', does: 'Emails to leads, invites, password resets, notification emails', needs: '' },
   { key: 'inboundEmail', name: 'SendGrid Inbound Parse', does: 'Email replies land in the inbox and stop automations', needs: 'SENDGRID_INBOUND_DOMAIN, SENDGRID_INBOUND_KEY' },
   { key: 'ai', name: 'OpenAI', does: 'Call transcripts, call summaries, AI speed-to-lead replies', needs: 'OPENAI_API_KEY' },
@@ -339,7 +340,7 @@ function Integrations() {
       </tbody></table></div>
       <div className="sep" /><h3>Webhook addresses</h3>
       <p className="help">Paste these into each provider’s dashboard. “Set up calling” and buying numbers fill in the Twilio ones for you.</p>
-      <div className="list">{Object.entries({ 'Twilio TwiML App → Voice URL': status.data.webhooks.twilioVoiceApp, 'Twilio phone numbers → A call comes in': status.data.webhooks.twilioInbound, 'Twilio Messaging Service → incoming messages': status.data.webhooks.twilioSms, 'SendGrid Inbound Parse URL': status.data.webhooks.sendgridInbound, 'Facebook app → Webhooks (Page, leadgen)': status.data.webhooks.facebook, 'Google Ads lead form → Webhook URL': status.data.webhooks.googleAds }).map(([k, v]) => (
+      <div className="list">{Object.entries({ 'Twilio TwiML App → Voice URL': status.data.webhooks.twilioVoiceApp, 'Twilio phone numbers → A call comes in': status.data.webhooks.twilioInbound, 'Twilio Messaging Service → incoming messages': status.data.webhooks.twilioSms, 'SendGrid Inbound Parse URL': status.data.webhooks.sendgridInbound, 'Facebook app → Webhooks (Page, leadgen)': status.data.webhooks.facebook, 'Google Ads lead form → Webhook URL': status.data.webhooks.googleAds, 'RingCentral app → OAuth redirect URI': status.data.webhooks.ringcentralRedirect }).map(([k, v]) => (
         <div className="li" key={k}><div className="grow"><b>{k}</b><small className="mono" style={{ wordBreak: 'break-all' }}>{v}</small></div><button className="icon-btn sm" onClick={() => copy(v)} aria-label={`Copy ${k}`}><Icon name="copy" className="sm" /></button></div>
       ))}</div>
       <div className="sep" /><h3>Lead vendors & website forms</h3>

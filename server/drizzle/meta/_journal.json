@@ -8,6 +8,13 @@
       "when": 1795549478974,
       "tag": "0000_mysql_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1795636773212,
+      "tag": "0001_ringcentral",
+      "breakpoints": true
     }
   ]
 }

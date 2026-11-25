@@ -16,6 +16,7 @@ import { attachRecording, updateSmsStatus } from './delivery.js';
 import { last10, toE164 } from './phone.js';
 import { cfg, enabled } from './settings.js';
 import { messagingResponse, requireTwilioSignature } from './twilio.js';
+import { verificationToken as rcVerificationToken } from './ringcentral.js';
 import { callWebhooks, leadByPhone } from './callflow.js';
 
 export const webhooks = Router();
@@ -50,6 +51,30 @@ webhooks.post('/twilio/sms', form, requireTwilioSignature, ah(async (req, res) =
 webhooks.post('/twilio/sms-status', form, requireTwilioSignature, ah(async (req, res) => {
   await updateSmsStatus(String(req.body.MessageSid ?? ''), String(req.body.MessageStatus ?? ''), req.body.ErrorCode ? String(req.body.ErrorCode) : undefined);
   res.sendStatus(204);
+}));
+
+/* ---------------- RingCentral (incoming texts to an agent's RingCentral number) ---------------- */
+
+const seenRc = new Set<string>();
+/** RingCentral webhook: first a validation handshake (echo the token), then instant SMS events for that user. */
+webhooks.post('/ringcentral', json, ah(async (req, res) => {
+  const handshake = req.header('validation-token');
+  if (handshake) { res.setHeader('Validation-Token', handshake); return res.sendStatus(200); }
+  const userId = String(req.query.u ?? '');
+  const given = String(req.header('verification-token') ?? '');
+  const want = userId ? rcVerificationToken(userId) : '';
+  if (!want || given.length !== want.length || !timingSafeEqual(Buffer.from(given), Buffer.from(want))) return res.sendStatus(403);
+  res.sendStatus(200); // acknowledge fast; RingCentral retries slow responses
+  const m = req.body?.body as { id?: string | number; type?: string; direction?: string; from?: { phoneNumber?: string }; subject?: string } | undefined;
+  if (!m || m.type !== 'SMS' || m.direction !== 'Inbound' || !m.from?.phoneNumber || !m.subject) return;
+  const key = `${userId}:${m.id}`;
+  if (seenRc.has(key)) return; // RingCentral can deliver the same event twice
+  seenRc.add(key); if (seenRc.size > 2000) seenRc.delete(seenRc.values().next().value!);
+  try {
+    const u = await db.query.users.findFirst({ where: (t, { eq }) => eq(t.id, userId) });
+    const lead = u ? await leadByPhone(m.from.phoneNumber, u.agencyId) : null;
+    if (lead) await receiveReply(lead.id, 'sms', String(m.subject).slice(0, 5000));
+  } catch (e) { console.error('RingCentral text failed', e); }
 }));
 
 /* ---------------- SendGrid Inbound Parse ---------------- */

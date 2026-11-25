@@ -21,6 +21,7 @@ export const cfg = {
   facebook: () => ({ appSecret: v('FACEBOOK_APP_SECRET'), verifyToken: v('FACEBOOK_VERIFY_TOKEN'), pageToken: v('FACEBOOK_PAGE_ACCESS_TOKEN'), graphVersion: v('FACEBOOK_GRAPH_VERSION') || 'v21.0' }),
   googleAds: () => ({ webhookKey: v('GOOGLE_ADS_WEBHOOK_KEY') }),
   microsoft: () => ({ tenantId: v('MS_TENANT_ID'), clientId: v('MS_CLIENT_ID'), clientSecret: v('MS_CLIENT_SECRET') }),
+  ringcentral: () => ({ clientId: v('RINGCENTRAL_CLIENT_ID'), clientSecret: v('RINGCENTRAL_CLIENT_SECRET'), server: (v('RINGCENTRAL_SERVER') || 'https://platform.ringcentral.com').replace(/\/$/, '') }),
   /** Agency that receives leads from Facebook / Google webhooks (single-agency installs can leave it empty = first agency). */
   defaultAgencyId: () => v('DEFAULT_AGENCY_ID'),
 };
@@ -35,6 +36,8 @@ export const enabled = {
   facebook: () => { const f = cfg.facebook(); return !!(f.appSecret && f.verifyToken && f.pageToken); },
   googleAds: () => !!cfg.googleAds().webhookKey,
   outlook: () => { const m = cfg.microsoft(); return !!(m.tenantId && m.clientId && m.clientSecret); },
+  /** RingCentral app keys saved and a public https address (needed for the sign-in redirect and text webhooks). */
+  ringcentral: () => { const r = cfg.ringcentral(); return !!(r.clientId && r.clientSecret && /^https:\/\//.test(cfg.publicApiUrl())); },
 };
 
 export function integrationStatus() {

@@ -298,8 +298,35 @@ export const phoneNumbers = mysqlTable('phone_numbers', {
   label: varchar('label', { length: 80 }),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
   twilioSid: varchar('twilio_sid', { length: 64 }),
+  /** Who carries the number: 'twilio' (calls and texts through Twilio) or 'ringcentral' (the agent's RingCentral line). */
+  provider: varchar('provider', { length: 12 }).notNull().default('twilio'),
+  /** RingCentral extension that owns the number (RingCentral numbers only). */
+  rcExtensionId: varchar('rc_extension_id', { length: 32 }),
   createdAt: createdAt(),
 }, (t) => ({ i0: index('phone_numbers_user_idx').on(t.userId) }));
+
+/**
+ * A user's RingCentral sign-in (OAuth). Each agent connects their own RingCentral line so the browser phone
+ * registers as their extension. Tokens are stored encrypted.
+ */
+export const ringcentralConnections = mysqlTable('ringcentral_connections', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id, { onDelete: 'cascade' }),
+  accountId: varchar('account_id', { length: 32 }).notNull(),
+  extensionId: varchar('extension_id', { length: 32 }).notNull(),
+  extensionNumber: varchar('extension_number', { length: 20 }),
+  accessToken: text('access_token').notNull(),
+  refreshToken: text('refresh_token').notNull(),
+  accessExpiresAt: ts('access_expires_at').notNull(),
+  refreshExpiresAt: ts('refresh_expires_at').notNull(),
+  /** Webhook subscription for this extension's incoming texts. */
+  subscriptionId: varchar('subscription_id', { length: 64 }),
+  subscriptionExpiresAt: ts('subscription_expires_at'),
+  /** Call history is read up to here (recordings are matched to logged calls). */
+  callLogSyncedAt: ts('call_log_synced_at'),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at').notNull().default(now),
+}, (t) => ({ i0: index('rc_connections_extension_idx').on(t.extensionId) }));
 
 /**
  * Calls in progress. Every call runs as a Twilio conference ("room") so an admin can listen in

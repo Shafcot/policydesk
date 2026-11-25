@@ -45,6 +45,32 @@ Every call is recorded (dual channel). The recording is attached to the logged c
 2. Register the numbers for free at freecallerregistry.com.
 3. Watch each number's answer rate. The page flags numbers that look labelled.
 
+## 1b. RingCentral — calling and texting from RingCentral numbers
+
+Use this when some agents keep their numbers on RingCentral. Twilio and RingCentral can run side by side: each number in Settings → Phone numbers is marked **Twilio** or **RingCentral**, and each agent's browser phone, texts and recordings go through whichever carries their number.
+
+**One-time setup (Super Admin)**
+
+1. Sign in at [developers.ringcentral.com](https://developers.ringcentral.com) with the agency's RingCentral admin account and create an app: *REST API App*, auth *3-legged OAuth flow, authorization code*, server-side web app.
+2. App permissions (scopes): **VoIP Calling, Read Accounts, Read Call Log, Read Call Recording, SMS, Read Messages, Webhook Subscriptions**.
+3. OAuth redirect URI: `https://<your address>/api/ringcentral/callback` (Settings → Integrations shows the exact address).
+4. Copy the app's **Client ID** and **Client secret** into Settings → Integrations → RingCentral and click **Test**. While the app is still in RingCentral's test environment ("sandbox"), also set **Server** to `https://platform.devtest.ringcentral.com`; clear it once RingCentral approves the app for production.
+5. RingCentral reviews new apps before they work with real numbers (a few test calls and texts in the sandbox). Their developer console shows what's left.
+
+**Each agent**
+
+- Account menu (top right) → **Connect RingCentral** → sign in with their own RingCentral login. Their direct RingCentral number is added to Phone numbers and, if they don't have a number yet, assigned to them.
+- From then on, their dialer calls from that number in the browser, texts to their leads go from it, and calls to it ring in Bliss ERP while it's open (and on their RingCentral apps as usual).
+- Recordings: Bliss ERP starts recording each call (subject to the RingCentral account's recording settings), then picks the recording up from the RingCentral call history within a few minutes and transcribes it like Twilio recordings.
+
+**Differences from Twilio numbers**
+
+- Admin listen-in / whisper works on Twilio calls only (RingCentral has its own call monitoring for admins).
+- The phone menu and after-hours greeting for RingCentral numbers are set up in RingCentral, not in Bliss ERP.
+- Transfers go to a phone number or to a teammate's number.
+- Texting from RingCentral numbers needs the numbers registered for business texting (10DLC) in RingCentral.
+- RingCentral allows up to 5 browser phones per line at once; each browser registers once and is reused.
+
 ## 2. SendGrid — email
 
 1. Create an API key with Mail Send permission → `SENDGRID_API_KEY`.
@@ -109,4 +135,4 @@ Each lead source has its own address, listed in Settings → Integrations: `http
 
 - **GoHighLevel / AgencyZoom contacts and leads:** export to CSV, then use Leads → Import. Columns are matched automatically. Keep "Start new-lead automations" off so old leads don't get welcome texts.
 - **Customers and policies:** use Customers & policies → Import spreadsheet. There's a template button on that page.
-- **RingCentral numbers:** port them to Twilio (Twilio Console → Port & Host). The client signs a letter of authorization.
+- **RingCentral numbers:** keep them on RingCentral and connect them (section 1b), or port them to Twilio (Twilio Console → Port & Host; the client signs a letter of authorization).
