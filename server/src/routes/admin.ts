@@ -30,11 +30,16 @@ adminRouter.post('/users/invite', ah<AuthedRequest>(async (req, res) => {
     minCallsPerDay: z.number().int().min(0).default(50), maxCallsPerDay: z.number().int().min(0).default(100),
   }).parse(req.body);
   const email = b.email.toLowerCase().trim();
-  if (await db.query.users.findFirst({ where: eq(users.email, email) })) throw badRequest('A user with that email already exists');
+  const existing = await db.query.users.findFirst({ where: eq(users.email, email) });
+  // A removed user is only switched off (their history is kept), so inviting the same email brings that user back
+  // with a fresh invite link. The old password stops working; they set a new one from the link.
+  if (existing && (existing.active || existing.agencyId !== req.user.agencyId)) throw badRequest('A user with that email already exists');
   const token = randomBytes(24).toString('hex');
-  const [u] = await insertReturning(db, users, { ...b, email, agencyId: req.user.agencyId, inviteToken: token, status: 'offline', bookingSlug: makeSlug(b.name) });
+  const [u] = existing
+    ? await updateReturning(db, users, { ...b, email, active: true, inviteToken: token, passwordHash: null, resetToken: null, resetExpiresAt: null, status: 'offline' }, eq(users.id, existing.id))
+    : await insertReturning(db, users, { ...b, email, agencyId: req.user.agencyId, inviteToken: token, status: 'offline', bookingSlug: makeSlug(b.name) });
   const inviteLink = `${env.CLIENT_ORIGIN}/accept-invite?token=${token}`;
-  await sendTeamEmail(db, { agencyId: req.user.agencyId, to: email, subject: `${req.user.name} invited you to Bliss`, body: `Hi ${b.name.split(' ')[0]},\n\n${req.user.name} invited you to join Bliss. Set your password here:\n${inviteLink}` });
+  await sendTeamEmail(db, { agencyId: req.user.agencyId, to: email, subject: `${req.user.name} invited you to Bliss ERP`, body: `Hi ${b.name.split(' ')[0]},\n\n${req.user.name} invited you to join Bliss ERP. Set your password here:\n${inviteLink}` });
   res.status(201).json({ user: publicUser(u), inviteLink });
 }));
 
