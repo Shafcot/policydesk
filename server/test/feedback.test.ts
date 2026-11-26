@@ -139,6 +139,7 @@ describe('targets and activity', () => {
     const admin = (await (await as(ADMIN)).get('/api/dashboard')).body;
     expect(admin.activity.length).toBeGreaterThan(0);
     expect(admin.activity[0]).toHaveProperty('leadsToday');
+    expect(admin.kpis.totalLeads).toBe((await (await as(ADMIN)).get('/api/leads/count')).body.total);
     // other agents' targets are hidden from agents unless switched on
     const mine = (await m.get('/api/targets')).body;
     expect(mine.agents.map((a: { name: string }) => a.name)).toEqual([(await user(MAYA)).name]);

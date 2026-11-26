@@ -81,7 +81,7 @@ dashboardRouter.get('/', ah<AuthedRequest>(async (req, res) => {
     : [];
 
   res.json({
-    kpis: { newLeads: newLeads[0].n, contacted: contacted[0].n, quoted: quotedCalls[0].n, won: policiesSold, revenue, conversion: allLeads[0].n ? Math.round(wonLeads[0].n / allLeads[0].n * 100) : 0 },
+    kpis: { totalLeads: Number(allLeads[0].n), newLeads: newLeads[0].n, contacted: contacted[0].n, quoted: quotedCalls[0].n, won: policiesSold, revenue, conversion: allLeads[0].n ? Math.round(wonLeads[0].n / allLeads[0].n * 100) : 0 },
     byStage,
     // Agents always see their own and the team target.
     target: { team: st.teamTarget, achieved: teamRevenue },
