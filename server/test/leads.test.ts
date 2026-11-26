@@ -3,7 +3,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { db } from '../src/db/client.js';
 import { leadSources, leads, notes } from '../src/db/schema.js';
-import { ADMIN, app, as, freshPhone } from './helpers.js';
+import { ADMIN, MAYA, app, as, freshPhone } from './helpers.js';
 
 describe('lead intake', () => {
   it('creates a lead manually and starts the new-lead automations', async () => {
@@ -126,5 +126,23 @@ describe('migration extras', () => {
     const w0 = await db.query.leads.findFirst({ where: eq(leads.phone, phone) });
     const withNotes = w0 && { ...w0, notes: await db.select().from(notes).where(eq(notes.leadId, w0.id)) };
     expect(withNotes?.notes.some((x) => x.body.includes('called twice'))).toBe(true);
+  });
+});
+
+describe('lead totals', () => {
+  it('counts every lead matching the same filters as the list', async () => {
+    const a = await as(ADMIN);
+    const list = (await a.get('/api/leads?limit=5')).body;
+    const all = (await a.get('/api/leads/count')).body.total;
+    expect(list).toHaveLength(5);
+    expect(all).toBeGreaterThan(5);
+    const stage = (await a.get('/api/leads/count?stage=won')).body.total;
+    expect(stage).toBe((await a.get('/api/leads?stage=won&limit=500')).body.length);
+    expect(stage).toBeLessThan(all);
+    // Agents only count their own leads.
+    const m = await as(MAYA);
+    const mine = (await m.get('/api/leads/count')).body.total;
+    expect(mine).toBe((await m.get('/api/leads?limit=500')).body.length);
+    expect(mine).toBeLessThan(all);
   });
 });

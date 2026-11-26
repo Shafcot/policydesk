@@ -30,9 +30,9 @@ const ListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
 
-leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
-  const f = ListQuery.parse(req.query);
-  const where: SQL[] = [leadScope(req.user)];
+/** The list filters as SQL, shared by the list and its total so the two always agree. */
+function listWhere(f: z.infer<typeof ListQuery>, user: AuthedRequest['user']) {
+  const where: SQL[] = [leadScope(user)];
   if (f.q) {
     const pattern = `%${f.q.trim()}%`;
     // Case-insensitive through MySQL's default collation.
@@ -41,7 +41,7 @@ leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   }
   if (f.stage) where.push(eq(leads.stage, f.stage));
   if (f.source) where.push(eq(leads.source, f.source));
-  if (f.agent && req.user.role === 'admin') where.push(f.agent === 'none' ? isNull(leads.agentId) : eq(leads.agentId, f.agent));
+  if (f.agent && user.role === 'admin') where.push(f.agent === 'none' ? isNull(leads.agentId) : eq(leads.agentId, f.agent));
   if (f.line) where.push(eq(leads.line, f.line));
   if (f.type) where.push(eq(leads.type, f.type));
   if (f.days) where.push(gte(leads.createdAt, new Date(Date.now() - f.days * 864e5)));
@@ -49,8 +49,19 @@ leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   else if (f.bad === 'none') where.push(isNull(leads.badReason));
   else if (f.bad) where.push(eq(leads.badReason, f.bad));
   if (f.intake) where.push(eq(leads.stage, 'new'), or(isNull(leads.agentId), gte(leads.createdAt, new Date(Date.now() - 3 * 864e5)))!);
+  return and(...where);
+}
 
-  const rows = await db.select().from(leads).where(and(...where)).orderBy(desc(leads.createdAt)).limit(f.limit);
+/** How many leads match the list filters (the list itself shows at most `limit`). */
+leadsRouter.get('/count', ah<AuthedRequest>(async (req, res) => {
+  const f = ListQuery.parse(req.query);
+  const [r] = await db.select({ n: sql<number>`count(*)` }).from(leads).where(listWhere(f, req.user));
+  res.json({ total: Number(r?.n ?? 0) });
+}));
+
+leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
+  const f = ListQuery.parse(req.query);
+  const rows = await db.select().from(leads).where(listWhere(f, req.user)).orderBy(desc(leads.createdAt)).limit(f.limit);
 
   // Flag possible duplicates (same phone appears more than once in the agency).
   const phones = [...new Set(rows.map((r) => r.phone).filter(Boolean))];
