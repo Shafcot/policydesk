@@ -35,6 +35,10 @@ export async function fire(x: Exec, trigger: Trigger, ctx: TriggerContext) {
     const cfg = a.triggerConfig;
     if (trigger === 'stage_change' && cfg.stages?.length && (!ctx.stage || !cfg.stages.includes(ctx.stage))) continue;
     if (trigger === 'call_result' && cfg.results?.length && (!ctx.result || !cfg.results.includes(ctx.result))) continue;
+    if (trigger === 'new_lead' && cfg.sources?.length) {
+      const src = ctx.leadId ? (await x.query.leads.findFirst({ where: eq(leads.id, ctx.leadId), columns: { source: true } }))?.source : undefined;
+      if (!src || !cfg.sources.some((s) => s.toLowerCase() === src.toLowerCase())) continue;
+    }
     if (trigger === 'inactive' && (ctx.days === undefined || (cfg.days ?? 45) !== ctx.days)) continue;
     if (trigger === 'renewal_date' && cfg.daysBefore?.length && (ctx.daysBefore === undefined || !cfg.daysBefore.includes(ctx.daysBefore))) continue;
     // Never enrol the same contact twice in a flow that is still running.

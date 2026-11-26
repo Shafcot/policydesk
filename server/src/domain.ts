@@ -185,6 +185,8 @@ export type TriggerConfig = {
   daysBefore?: number[];
   /** inactive: fire when an open lead has had no contact for this many days. */
   days?: number;
+  /** new_lead: fire only for leads from these sources, e.g. ['Facebook Ads'] (empty = any source). */
+  sources?: string[];
   /** stage_change only: how long the lead must stay in the stage before the flow continues is a Wait step. */
 };
 
