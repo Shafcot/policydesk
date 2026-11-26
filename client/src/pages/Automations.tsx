@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { RESULTS, STAGES, type CallResult, type Stage } from '../lib/domain';
 import { ago, fdt } from '../lib/format';
-import { useTemplates } from '../lib/hooks';
+import { useLookups, useTemplates } from '../lib/hooks';
 import { useToast } from '../lib/toast';
 import { Icon } from '../components/Icon';
 import { Loading, Modal, PageHead, Pill } from '../components/ui';
@@ -16,7 +16,7 @@ type Step =
   | { type: 'condition'; condition: Condition }
   | { type: 'action'; action: Action; templateId?: string | null; stage?: Stage; text?: string };
 type Automation = {
-  id: string; name: string; active: boolean; trigger: Trigger; triggerConfig: { stages?: Stage[]; results?: CallResult[]; daysBefore?: number[]; days?: number };
+  id: string; name: string; active: boolean; trigger: Trigger; triggerConfig: { stages?: Stage[]; results?: CallResult[]; daysBefore?: number[]; days?: number; sources?: string[] };
   steps: Step[]; stopOnReply: boolean; stopOnBooking: boolean; stopOnWonLost: boolean; businessHoursOnly: boolean;
   stats?: { active: number; completed: number; stopped: number };
 };
@@ -36,6 +36,7 @@ export function Automations() {
   const { data } = useQuery({ queryKey: ['automations'], queryFn: () => api<Automation[]>('/automations'), refetchInterval: 30_000 });
   const [selId, setSelId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Automation | null>(null);
+  const lookups = useLookups();
   const [runs, setRuns] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const list = data ?? [];
@@ -77,7 +78,7 @@ export function Automations() {
             <div key={a.id} className={`flow-card ${d?.id === a.id ? 'on' : ''}`} onClick={() => { setSelId(a.id); setDraft(structuredClone(a)); }}>
               <div className="row"><b>{a.name}</b>
                 <label className="switch" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={a.active} onChange={() => toggle.mutate(a)} aria-label={`${a.name} active`} /><span /></label></div>
-              <small className="muted"><Icon name="zap" className="sm" /> {TLABEL[a.trigger]} · {a.steps.length} steps · {a.stats?.active ?? 0} in flow · {a.stats?.completed ?? 0} finished</small>
+              <small className="muted"><Icon name="zap" className="sm" /> {TLABEL[a.trigger]}{a.trigger === 'new_lead' && a.triggerConfig.sources?.length ? ` from ${a.triggerConfig.sources.join(", ")}` : ''} · {a.steps.length} steps · {a.stats?.active ?? 0} in flow · {a.stats?.completed ?? 0} finished</small>
             </div>
           ))}
           {!list.length && <div className="empty">No automations yet.</div>}
@@ -97,6 +98,7 @@ export function Automations() {
               <div className="flow">
                 <div className="node trigger"><span className="kind">Trigger</span>
                   <select className="input" value={d.trigger} onChange={(e) => setDraft({ ...d, trigger: e.target.value as Trigger, triggerConfig: {} })} aria-label="Trigger">{TRIGGERS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select>
+                  {d.trigger === 'new_lead' && <select className="input" value={d.triggerConfig.sources?.[0] ?? ''} onChange={(e) => setDraft({ ...d, triggerConfig: { sources: e.target.value ? [e.target.value] : [] } })} aria-label="Lead source"><option value="">From any source</option>{[...new Set((lookups.data?.sources ?? []).map((x) => x.name))].map((n) => <option key={n} value={n}>From {n}</option>)}</select>}
                   {d.trigger === 'stage_change' && <select className="input" value={d.triggerConfig.stages?.[0] ?? ''} onChange={(e) => setDraft({ ...d, triggerConfig: { stages: e.target.value ? [e.target.value as Stage] : [] } })} aria-label="Stage"><option value="">Any stage</option>{STAGES.map((s) => <option key={s.k} value={s.k}>Enters {s.n}</option>)}</select>}
                   {d.trigger === 'call_result' && <select className="input" value={d.triggerConfig.results?.[0] ?? ''} onChange={(e) => setDraft({ ...d, triggerConfig: { results: e.target.value ? [e.target.value as CallResult] : [] } })} aria-label="Result"><option value="">Any result</option>{RESULTS.map((r) => <option key={r.k} value={r.k}>{r.n}</option>)}</select>}
                   {d.trigger === 'inactive' && <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}><input className="input num" type="number" min={1} max={365} style={{ width: 80 }} value={d.triggerConfig.days ?? 45} onChange={(e) => setDraft({ ...d, triggerConfig: { days: Math.max(1, Number(e.target.value) || 45) } })} aria-label="Days without contact" /><small className="muted">days without contact</small></span>}
