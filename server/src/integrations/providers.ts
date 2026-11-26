@@ -17,7 +17,7 @@ function sg() {
 /** Sends one email. `replyTo` routes replies through Inbound Parse back to the lead's thread. */
 export async function sendEmail(e: { to: string; subject: string; text: string; replyTo?: string }) {
   const s = cfg.sendgrid();
-  const [res] = await sg().send({ to: e.to, from: { email: s.from, name: s.fromName }, replyTo: e.replyTo, subject: e.subject, text: e.text });
+  const [res] = await sg().send({ to: e.to, from: { email: s.from, name: s.fromName }, replyTo: e.replyTo || s.replyTo || undefined, subject: e.subject, text: e.text });
   return { id: String(res.headers['x-message-id'] ?? ''), status: res.statusCode };
 }
 
