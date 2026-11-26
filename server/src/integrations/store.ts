@@ -33,6 +33,7 @@ export const GROUPS: Group[] = [
     { key: 'SENDGRID_API_KEY', label: 'API key', secret: true, placeholder: 'SG.…' },
     { key: 'SENDGRID_FROM_EMAIL', label: 'From email', placeholder: 'quotes@youragency.com' },
     { key: 'SENDGRID_FROM_NAME', label: 'From name' },
+    { key: 'SENDGRID_REPLY_TO', label: 'Reply-to email', placeholder: 'you@youragency.com', hint: 'Where replies go when Inbound Parse isn’t set up. Can be any inbox.' },
     { key: 'SENDGRID_INBOUND_DOMAIN', label: 'Reply domain (Inbound Parse)', placeholder: 'reply.youragency.com' },
     { key: 'SENDGRID_INBOUND_KEY', label: 'Inbound Parse secret', secret: true, hint: 'Any random text. Also goes on the end of the Inbound Parse URL.' },
   ] },
