@@ -14,6 +14,7 @@ import { ImportLeads } from '../components/ImportLeads';
 import { DeleteLeadsModal } from '../components/DeleteLeads';
 
 type Filters = { q: string; stage: string; source: string; agent: string; line: string; type: string; days: string; bad: string };
+const PER_PAGE = 100;
 const EMPTY: Filters = { q: '', stage: '', source: '', agent: '', line: '', type: '', days: '', bad: '' };
 
 function exportCsv(rows: Lead[], team: Map<string, string>) {
@@ -33,6 +34,7 @@ export function Leads() {
   // ?bad=<reason> opens the list already filtered (links from the Bad leads report).
   const [f, setF] = useState<Filters>(() => ({ ...EMPTY, bad: params.get('bad') ?? '', source: params.get('source') ?? '' }));
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
   const [newLead, setNewLead] = useState(false);
   const [importing, setImporting] = useState(false);
   const qc = useQueryClient();
@@ -45,12 +47,12 @@ export function Leads() {
   const names = useMemo(() => new Map((team.data ?? []).map((u) => [u.id, u.name])), [team.data]);
 
   const query = useQuery({
-    queryKey: ['leads', tab, f],
-    queryFn: () => api<Lead[]>(`/leads${qs({ ...f, intake: tab === 'intake' || undefined })}`),
+    queryKey: ['leads', tab, f, page],
+    queryFn: () => api<Lead[]>(`/leads${qs({ ...f, intake: tab === 'intake' || undefined, limit: PER_PAGE, page })}`),
     placeholderData: (prev) => prev,
   });
   const rows = query.data ?? [];
-  // The list loads the newest 200; the total counts every lead matching the same filters.
+  // The list loads one page at a time; the total counts every lead matching the same filters.
   const total = useQuery({
     queryKey: ['leads', 'count', tab, f],
     queryFn: () => api<{ total: number }>(`/leads/count${qs({ ...f, intake: tab === 'intake' || undefined })}`),
@@ -67,11 +69,13 @@ export function Leads() {
     onSuccess: (r, b) => done(`${r.updated} ${r.updated === 1 ? 'lead' : 'leads'} ${b.agentId ? `assigned to ${names.get(b.agentId)}` : b.stage ? `moved to ${STG[b.stage].n}` : b.badReason ? `marked as ${BAD[b.badReason].n}` : 'cleared of the bad-lead flag'}`), onError: onErr });
   const assignOne = useMutation({ mutationFn: ({ id, agentId }: { id: string; agentId: string | null }) => api(`/leads/${id}`, { method: 'PATCH', json: { agentId } }), onSuccess: (_r, v) => done(v.agentId ? `Assigned to ${names.get(v.agentId)}` : 'Lead unassigned'), onError: onErr });
 
-  const set = (k: keyof Filters) => (e: { target: { value: string } }) => { setF({ ...f, [k]: e.target.value }); setSel(new Set()); };
+  const set = (k: keyof Filters) => (e: { target: { value: string } }) => { setF({ ...f, [k]: e.target.value }); setSel(new Set()); setPage(1); };
+  const pages = Math.max(1, Math.ceil((totalN ?? 0) / PER_PAGE));
+  const goTo = (p: number) => { setPage(Math.min(Math.max(1, Math.round(p) || 1), pages)); setSel(new Set()); window.scrollTo({ top: 0, behavior: 'smooth' }); document.getElementById('view')?.scrollTo({ top: 0, behavior: 'smooth' }); };
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allSel = rows.length > 0 && rows.every((r) => sel.has(r.id));
   const openLead = (id: string) => setParams((p) => { p.set('lead', id); return p; });
-  const setTab = (t: string) => { setSel(new Set()); setParams((p) => { if (t === 'intake') p.set('tab', 'intake'); else p.delete('tab'); return p; }); };
+  const setTab = (t: string) => { setSel(new Set()); setPage(1); setParams((p) => { if (t === 'intake') p.set('tab', 'intake'); else p.delete('tab'); return p; }); };
 
   return (
     <>
@@ -137,11 +141,23 @@ export function Leads() {
         {query.isLoading && <Loading />}
         {query.isSuccess && !rows.length && <Empty>No leads match these filters.</Empty>}
       </div>
-      <p className="help" style={{ marginTop: 8 }}>
-        {totalN === undefined ? `${rows.length.toLocaleString()} leads`
-          : totalN > rows.length ? <>Showing the newest <b>{rows.length.toLocaleString()}</b> of <b>{totalN.toLocaleString()}</b> leads. Search or filter to find the rest.</>
-          : <><b>{totalN.toLocaleString()}</b> {totalN === 1 ? 'lead' : 'leads'}</>}
-      </p>
+      <div className="pager">
+        <p className="help">
+          {totalN === undefined ? `${rows.length.toLocaleString()} leads`
+            : totalN > PER_PAGE ? <>Showing <b>{((page - 1) * PER_PAGE + (rows.length ? 1 : 0)).toLocaleString()}–{((page - 1) * PER_PAGE + rows.length).toLocaleString()}</b> of <b>{totalN.toLocaleString()}</b> leads, newest first</>
+            : <><b>{totalN.toLocaleString()}</b> {totalN === 1 ? 'lead' : 'leads'}</>}
+        </p>
+        {pages > 1 && (
+          <div className="row" style={{ gap: 6 }}>
+            <button className="btn sm" disabled={page <= 1} onClick={() => goTo(1)} aria-label="First page">First</button>
+            <button className="btn sm" disabled={page <= 1} onClick={() => goTo(page - 1)}><Icon name="left" className="sm" />Previous</button>
+            <span className="help">Page <input className="input sm page-input" type="number" min={1} max={pages} key={page} defaultValue={page} aria-label="Page number"
+              onKeyDown={(e) => { if (e.key === 'Enter') goTo(Number((e.target as HTMLInputElement).value)); }} onBlur={(e) => Number(e.target.value) !== page && goTo(Number(e.target.value))} /> of {pages.toLocaleString()}</span>
+            <button className="btn sm" disabled={page >= pages} onClick={() => goTo(page + 1)}>Next<Icon name="right" className="sm" /></button>
+            <button className="btn sm" disabled={page >= pages} onClick={() => goTo(pages)} aria-label="Last page">Last</button>
+          </div>
+        )}
+      </div>
       {newLead && <NewLeadModal onClose={() => setNewLead(false)} />}
       {importing && <ImportLeads onClose={() => setImporting(false)} />}
     </>

@@ -28,6 +28,8 @@ const ListQuery = z.object({
   /** Bad-lead filter: one reason, 'any' (all bad leads) or 'none' (hide bad leads). */
   bad: z.enum([...BAD_REASONS, 'any', 'none']).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(200),
+  /** 1-based page of `limit` rows, newest first. */
+  page: z.coerce.number().int().min(1).max(1_000_000).default(1),
 });
 
 /** The list filters as SQL, shared by the list and its total so the two always agree. */
@@ -61,7 +63,7 @@ leadsRouter.get('/count', ah<AuthedRequest>(async (req, res) => {
 
 leadsRouter.get('/', ah<AuthedRequest>(async (req, res) => {
   const f = ListQuery.parse(req.query);
-  const rows = await db.select().from(leads).where(listWhere(f, req.user)).orderBy(desc(leads.createdAt)).limit(f.limit);
+  const rows = await db.select().from(leads).where(listWhere(f, req.user)).orderBy(desc(leads.createdAt), desc(leads.id)).limit(f.limit).offset((f.page - 1) * f.limit);
 
   // Flag possible duplicates (same phone appears more than once in the agency).
   const phones = [...new Set(rows.map((r) => r.phone).filter(Boolean))];

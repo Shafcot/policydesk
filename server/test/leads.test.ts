@@ -145,4 +145,15 @@ describe('lead totals', () => {
     expect(mine).toBe((await m.get('/api/leads?limit=500')).body.length);
     expect(mine).toBeLessThan(all);
   });
+
+  it('pages through every lead, newest first, without repeats', async () => {
+    const a = await as(ADMIN);
+    const p1 = (await a.get('/api/leads?limit=3&page=1')).body;
+    const p2 = (await a.get('/api/leads?limit=3&page=2')).body;
+    const both = (await a.get('/api/leads?limit=6')).body;
+    expect([...p1, ...p2].map((l: { id: string }) => l.id)).toEqual(both.map((l: { id: string }) => l.id));
+    const total = (await a.get('/api/leads/count')).body.total;
+    const last = (await a.get(`/api/leads?limit=5&page=${Math.ceil(total / 5)}`)).body;
+    expect(last.length).toBe(total % 5 || 5);
+  });
 });
