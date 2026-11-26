@@ -10,7 +10,7 @@ import { TasksPanel } from '../components/Tasks';
 import { LiveCalls } from '../components/CallBar';
 
 type Dash = {
-  kpis: { newLeads: number; contacted: number; quoted: number; won: number; revenue: number; conversion: number };
+  kpis: { totalLeads: number; newLeads: number; contacted: number; quoted: number; won: number; revenue: number; conversion: number };
   byStage: Record<Stage, number>;
   target: { team: number; achieved: number } | null;
   myTarget: { target: number; achieved: number; sold: number } | null;
@@ -77,8 +77,8 @@ function AdminDash({ d }: { d: Dash }) {
     <>
       <PageHead title={`Good ${greeting()}, ${me.name.split(' ')[0]}`} sub="Agency overview · last 30 days"
         actions={<><Link className="btn" to="/reports"><Icon name="chart" className="sm" />Reports</Link><Link className="btn primary" to="/leads?tab=intake"><Icon name="inbox" className="sm" />Lead intake</Link></>} />
-      <div className="kpis">
-        {([['New leads', d.kpis.newLeads, 'last 30 days'], ['Contacted', d.kpis.contacted, 'reached by phone'], ['Quoted', d.kpis.quoted, 'quotes issued'], ['Won', d.kpis.won, 'policies this target month'], ['Revenue', kmoney(d.kpis.revenue), `written premium · ${d.period.label}`], ['Conversion', `${d.kpis.conversion}%`, 'lead → won']] as const)
+      <div className="kpis k7">
+        {([['Total leads', Number(d.kpis.totalLeads ?? 0).toLocaleString(), <Link to="/leads">all leads in Bliss</Link>], ['New leads', d.kpis.newLeads, 'last 30 days'], ['Contacted', d.kpis.contacted, 'reached by phone'], ['Quoted', d.kpis.quoted, 'quotes issued'], ['Won', d.kpis.won, 'policies this target month'], ['Revenue', kmoney(d.kpis.revenue), `written premium · ${d.period.label}`], ['Conversion', `${d.kpis.conversion}%`, 'lead → won']] as const)
           .map(([label, v, s]) => <div className="kpi" key={label}><div className="eyebrow">{label}</div><b>{v}</b><small>{s}</small></div>)}
       </div>
       <div className="grid g-dash">
