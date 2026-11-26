@@ -98,7 +98,7 @@ function UserModal({ user, onClose, onInvited }: { user: User | null; onClose: (
   const save = useMutation({
     mutationFn: async () => {
       const r = user
-        ? await api(`/admin/users/${user.id}`, { method: 'PATCH', json: { name: f.name, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, daysOff: f.daysOff, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay, calendarEmail: f.calendarEmail.trim() || null } })
+        ? await api(`/admin/users/${user.id}`, { method: 'PATCH', json: { name: f.name, email: f.email.trim(), role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, daysOff: f.daysOff, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay, calendarEmail: f.calendarEmail.trim() || null } })
         : await api<{ inviteLink: string; user: { id: string } }>('/admin/users/invite', { method: 'POST', json: { name: f.name, email: f.email, role: f.role, lines: f.lines, hoursStart: f.hoursStart, hoursEnd: f.hoursEnd, minCallsPerDay: f.minCallsPerDay, maxCallsPerDay: f.maxCallsPerDay } });
       const id = user?.id ?? (r as { user: { id: string } }).user.id;
       try { await applyNumber(id); } catch (e) { toast(`${user ? 'Saved' : 'User created'}, but the phone number wasn’t set: ${err(e)}`, 'alert'); }
@@ -112,7 +112,7 @@ function UserModal({ user, onClose, onInvited }: { user: User | null; onClose: (
       footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!f.name || !f.email || save.isPending || (pick === 'buy' && !buyNumber)} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : user ? 'Save changes' : 'Create invitation'}</button></>}>
       <div className="form-grid">
         <div className="field"><label htmlFor="u-name">Full name</label><input id="u-name" className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>
-        <div className="field"><label htmlFor="u-email">Email</label><input id="u-email" className="input" type="email" value={f.email} disabled={!!user} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>
+        <div className="field"><label htmlFor="u-email">Email</label><input id="u-email" className="input" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>
         <div className="field"><label htmlFor="u-role">Role</label><select id="u-role" className="input" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as User['role'] })}><option value="agent">Agent</option><option value="admin">Super Admin</option></select></div>
         <div className="field"><label>Working hours</label><div className="row" style={{ flexWrap: 'nowrap' }}><input className="input" type="time" value={f.hoursStart} onChange={(e) => setF({ ...f, hoursStart: e.target.value })} aria-label="Start" /><input className="input" type="time" value={f.hoursEnd} onChange={(e) => setF({ ...f, hoursEnd: e.target.value })} aria-label="End" /></div></div>
         <div className="field"><label htmlFor="u-min">Min calls / day</label><input id="u-min" className="input num" type="number" value={f.minCallsPerDay} onChange={(e) => setF({ ...f, minCallsPerDay: Number(e.target.value) })} /></div>

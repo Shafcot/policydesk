@@ -74,3 +74,16 @@ describe('removing and re-inviting a user', () => {
     expect((await a.post('/api/admin/users/invite', { name: 'Dup', email, role: 'agent' })).status).toBe(400);
   });
 });
+
+describe('editing a user', () => {
+  it('lets the Super Admin correct a sign-in email, but not to one already in use', async () => {
+    const a = await as(ADMIN);
+    const inv = await a.post('/api/admin/users/invite', { name: 'Typo Person', email: `typo-${Date.now()}@exmaple.com`, role: 'agent', lines: ['Auto'] });
+    const id = inv.body.user.id;
+    const fixed = `fixed-${Date.now()}@example.com`;
+    const r = await a.patch(`/api/admin/users/${id}`, { email: ` ${fixed.toUpperCase()} ` });
+    expect(r.status).toBe(200);
+    expect(r.body.email).toBe(fixed);
+    expect((await a.patch(`/api/admin/users/${id}`, { email: ADMIN })).status).toBe(400);
+  });
+});

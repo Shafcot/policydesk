@@ -46,13 +46,17 @@ adminRouter.post('/users/invite', ah<AuthedRequest>(async (req, res) => {
 
 adminRouter.patch('/users/:id', ah<AuthedRequest>(async (req, res) => {
   const b = z.object({
-    name: z.string().min(1).max(120).optional(), role: z.enum(['admin', 'agent']).optional(), lines: z.array(z.enum(LINES)).optional(),
+    name: z.string().min(1).max(120).optional(), email: z.string().trim().toLowerCase().email().max(200).optional(), role: z.enum(['admin', 'agent']).optional(), lines: z.array(z.enum(LINES)).optional(),
     hoursStart: Hours.optional(), hoursEnd: Hours.optional(), daysOff: Days.optional(),
     minCallsPerDay: z.number().int().min(0).optional(), maxCallsPerDay: z.number().int().min(0).optional(), monthlyTarget: z.number().min(0).optional(),
     calendarEmail: z.string().email().or(z.literal('')).nullable().optional().transform((v) => (v === '' ? null : v)),
   }).parse(req.body);
   const id = String(req.params.id);
   if (id === req.user.id && b.role === 'agent') throw badRequest('You cannot remove your own Super Admin role');
+  if (b.email) {
+    const taken = await db.query.users.findFirst({ where: eq(users.email, b.email) });
+    if (taken && taken.id !== id) throw badRequest('Another user already signs in with that email');
+  }
   const [u] = await updateReturning(db, users, b, and(eq(users.id, id), eq(users.agencyId, req.user.agencyId)));
   if (!u) throw notFound('User not found');
   res.json(publicUser(u));
