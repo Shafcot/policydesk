@@ -50,6 +50,15 @@ export function Leads() {
     placeholderData: (prev) => prev,
   });
   const rows = query.data ?? [];
+  // The list loads the newest 200; the total counts every lead matching the same filters.
+  const total = useQuery({
+    queryKey: ['leads', 'count', tab, f],
+    queryFn: () => api<{ total: number }>(`/leads/count${qs({ ...f, intake: tab === 'intake' || undefined })}`),
+    placeholderData: (prev) => prev,
+  });
+  const totalN = total.data?.total;
+  const overall = useQuery({ queryKey: ['leads', 'count', 'all'], queryFn: () => api<{ total: number }>('/leads/count') });
+  const overallTxt = overall.data ? ` ${overall.data.total.toLocaleString()} ${overall.data.total === 1 ? 'lead' : 'leads'} in total.` : '';
   const intakeCount = useQuery({ queryKey: ['leads', 'intake-count'], queryFn: () => api<Lead[]>('/leads?intake=true'), enabled: isAdmin });
 
   const done = (msg: string) => { setSel(new Set()); qc.invalidateQueries({ queryKey: ['leads'] }); qc.invalidateQueries({ queryKey: ['dashboard'] }); toast(msg); };
@@ -66,7 +75,7 @@ export function Leads() {
 
   return (
     <>
-      <PageHead title={isAdmin ? 'Leads' : 'My leads'} sub={isAdmin ? 'Every lead in the agency. New leads land in intake, tagged by source, then auto-assign.' : 'Only leads assigned to you.'}
+      <PageHead title={isAdmin ? 'Leads' : 'My leads'} sub={(isAdmin ? 'Every lead in the agency. New leads land in intake, tagged by source, then auto-assign.' : 'Only leads assigned to you.') + overallTxt}
         actions={<>{isAdmin && <button className="btn" onClick={() => setImporting(true)}><Icon name="upload" className="sm" />Import</button>}<button className="btn" onClick={() => exportCsv(rows, names)}><Icon name="download" className="sm" />Export</button><button className="btn primary" onClick={() => setNewLead(true)}><Icon name="plus" className="sm" />New lead</button></>} />
       <div className="tabs" style={{ marginBottom: 14 }}>
         <button className={tab === 'all' ? 'on' : ''} onClick={() => setTab('all')}>All leads</button>
@@ -128,7 +137,11 @@ export function Leads() {
         {query.isLoading && <Loading />}
         {query.isSuccess && !rows.length && <Empty>No leads match these filters.</Empty>}
       </div>
-      <p className="help" style={{ marginTop: 8 }}>{rows.length} leads</p>
+      <p className="help" style={{ marginTop: 8 }}>
+        {totalN === undefined ? `${rows.length.toLocaleString()} leads`
+          : totalN > rows.length ? <>Showing the newest <b>{rows.length.toLocaleString()}</b> of <b>{totalN.toLocaleString()}</b> leads. Search or filter to find the rest.</>
+          : <><b>{totalN.toLocaleString()}</b> {totalN === 1 ? 'lead' : 'leads'}</>}
+      </p>
       {newLead && <NewLeadModal onClose={() => setNewLead(false)} />}
       {importing && <ImportLeads onClose={() => setImporting(false)} />}
     </>
