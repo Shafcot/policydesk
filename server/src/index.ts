@@ -4,6 +4,7 @@ import { env } from './config.js';
 import { enabled, integrationStatus } from './integrations/settings.js';
 import { sendEmail } from './integrations/providers.js';
 import { startWorker } from './services/jobs.js';
+import { startSelfUpdate } from './services/selfupdate.js';
 import { setTeamEmailProvider } from './services/mailer.js';
 import { attachRealtime } from './services/realtime.js';
 import { sleeping } from './services/activity.js';
@@ -21,3 +22,5 @@ attachRealtime(server);
 server.listen(/^\d+$/.test(env.PORT) ? Number(env.PORT) : env.PORT, () => console.log(`Bliss API listening on :${env.PORT}`));
 // The background worker runs inside the API process unless RUN_WORKER=false (then run `npm run worker` separately).
 if (process.env.RUN_WORKER !== 'false') startWorker();
+// Uploading ~/bliss-erp-update.zip on the server deploys it (see DEPLOY.md).
+if (env.NODE_ENV === 'production' && process.env.SELF_UPDATE !== 'false') startSelfUpdate();
